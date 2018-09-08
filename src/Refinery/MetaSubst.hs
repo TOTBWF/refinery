@@ -1,27 +1,27 @@
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE DefaultSignatures      #-}
+{-# LANGUAGE FlexibleContexts       #-}
+{-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE UndecidableInstances #-}
-module Refinery.MetaSubst 
+{-# LANGUAGE GADTs                  #-}
+{-# LANGUAGE MultiParamTypeClasses  #-}
+{-# LANGUAGE ScopedTypeVariables    #-}
+{-# LANGUAGE TypeFamilies           #-}
+{-# LANGUAGE TypeOperators          #-}
+{-# LANGUAGE UndecidableInstances   #-}
+module Refinery.MetaSubst
   (
     SubstMeta(..)
   , MonadName(..)
   , MetaVar(..)
+  , Extract(..)
   , MetaSubst(..)
   ) where
 
-import GHC.Generics
+import           GHC.Generics
 
-import Data.List (find)
-import Data.Ratio
-import Data.Word
+import           Data.List    (find)
+import           Data.Ratio
+import           Data.Word
 
 data SubstMeta a b where
   SubstMeta :: (a ~ b) => MetaVar a -> SubstMeta a b
@@ -31,7 +31,10 @@ class (Monad m) => MonadName v m | v -> m where
 
 type family MetaVar a :: *
 
-class (MonadName (MetaVar b) m, Eq (MetaVar b)) => MetaSubst b a m where
+class Extract a where
+  hole :: MetaVar a -> a
+
+class (MonadName (MetaVar b) m, Eq (MetaVar b), Extract b) => MetaSubst b a m where
 
   isMetaVar :: a -> Maybe (SubstMeta a b)
   isMetaVar _ = Nothing
@@ -42,7 +45,7 @@ class (MonadName (MetaVar b) m, Eq (MetaVar b)) => MetaSubst b a m where
   default metaSubst :: (Generic a, GMetaSubst b (Rep a)) => MetaVar b -> b -> a -> a
   metaSubst n u x = case (isMetaVar x :: Maybe (SubstMeta a b)) of
     Just (SubstMeta m) | n == m -> u
-    _ -> to $ gmetaSubst n u (from x)
+    _                           -> to $ gmetaSubst n u (from x)
 
   default metaSubsts :: (Generic a, GMetaSubst b (Rep a)) => [(MetaVar b, b)] -> a -> a
   metaSubsts ss x = case (isMetaVar x :: Maybe (SubstMeta a b)) of
@@ -81,25 +84,27 @@ instance (GMetaSubst a f, GMetaSubst a g) => GMetaSubst a (f :+: g) where
   gmetaSubsts ss (L1 f) = L1 $ gmetaSubsts ss f
   gmetaSubsts ss (R1 g) = R1 $ gmetaSubsts ss g
 
-instance (Eq (MetaVar a), MonadName (MetaVar a) m) => MetaSubst a Char m where
+
+instance (Eq (MetaVar a), MonadName (MetaVar a) m, Extract a) => MetaSubst a Char m where
   metaSubst _ _ = id
   metaSubsts _ = id
 
-instance (Eq (MetaVar a), MonadName (MetaVar a) m) => MetaSubst a Integer m where
+instance (Eq (MetaVar a), MonadName (MetaVar a) m, Extract a) => MetaSubst a Integer m where
   metaSubst _ _ = id
   metaSubsts _ = id
 
-instance (Eq (MetaVar a), MonadName (MetaVar a) m) => MetaSubst a (Ratio b) m where
+instance (Eq (MetaVar a), MonadName (MetaVar a) m, Extract a) => MetaSubst a (Ratio b) m where
   metaSubst _ _ = id
   metaSubsts _ = id
 
-instance (Eq (MetaVar a), MonadName (MetaVar a) m) => MetaSubst a Word8 m where
+instance (Eq (MetaVar a), MonadName (MetaVar a) m, Extract a) => MetaSubst a Word8 m where
   metaSubst _ _ = id
   metaSubsts _ = id
 
-instance (Eq (MetaVar a), MonadName (MetaVar a) m) => MetaSubst a Int m  where
+instance (Eq (MetaVar a), MonadName (MetaVar a) m, Extract a) => MetaSubst a Int m  where
   metaSubst _ _ = id
   metaSubsts _ = id
+
 
 instance (MetaSubst c a m, MetaSubst c b m) => MetaSubst c (a,b) m
 instance (MetaSubst d a m, MetaSubst d b m, MetaSubst d c m) => MetaSubst d (a,b,c) m

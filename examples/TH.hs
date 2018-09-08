@@ -4,7 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ExplicitForAll #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module TH where
 
@@ -13,6 +13,8 @@ import Language.Haskell.TH.Syntax hiding (lift)
 
 import Control.Applicative hiding (many)
 
+import GHC.Generics (Generic)
+
 import Control.Monad.Trans
 import Control.Monad.Except
 
@@ -20,15 +22,18 @@ import Data.List (find)
 import Data.Foldable (fold)
 
 import Refinery.MetaSubst
-import Refinery.Telescope (Telescope, (@>))
+import Refinery.Proof
+import Refinery.Telescope (Telescope(..), (@>))
 import qualified Refinery.Telescope as Tl
 import Refinery.Tactic (tactic, subgoal, solve, many)
 import qualified Refinery.Tactic as T
-import Refinery.Extract
 
 pattern t1 :-> t2 = AppT (AppT ArrowT t1) t2
 
 type instance MetaVar Exp = Name
+
+instance Extract Exp where
+  hole = UnboundVarE
 
 instance MetaSubst Exp Lit Q
 instance MetaSubst Exp Type Q
@@ -79,7 +84,9 @@ instance MetaSubst Exp Exp Q where
   isMetaVar _ = Nothing
 
 data Judgement = [(Name, Type)] :|- Type
-  deriving (Show)
+  deriving (Show, Generic)
+
+instance MetaSubst Exp Judgement Q
 
 instance MonadName Name Q where
   fresh = newName "?"
@@ -116,14 +123,11 @@ assumption = tactic $ \(ctx :|- g) -> do
     Just (x,_) -> return (VarE x)
     Nothing -> throwError ("No variables of type: " ++ show g)
 
-
 refine :: Tactic -> Q Type -> Q Exp
 refine t goal = do
   g <- goal
-  r <- solve t ([] :|- g)
-  case extract r of
-    ([], Just e) -> return e
-    (js, _) -> 
-      let js' = fold $ fmap (\j -> (show j) ++ "\n") js
-      in fail $ "Unsolved Goals:\n" ++ js'
+  (ProofState goals ext) <- solve t ([] :|- g)
+  case goals of
+    Empty -> return ext
+    js -> fail $ "Unsolved Goals:\n" ++ (fold $ (\j -> show j ++ "\n") <$> js)
 

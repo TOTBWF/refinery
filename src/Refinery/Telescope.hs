@@ -1,11 +1,11 @@
-{-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DeriveFunctor         #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DeriveTraversable     #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE PatternSynonyms       #-}
+{-# LANGUAGE StandaloneDeriving    #-}
 
 module Refinery.Telescope
   (
@@ -16,14 +16,21 @@ module Refinery.Telescope
   , foldlWithVar, foldrWithVar
   , foldlMWithVar, foldrMWithVar
   , toList
+  , filter
   ) where
 
-import Refinery.MetaSubst
+import           Prelude            hiding (filter)
+
+import           GHC.Generics
+
+import           Refinery.MetaSubst
 
 data Telescope v t
   = Empty
   | Snoc (Telescope v t) (MetaVar v) t
-  deriving (Functor, Foldable, Traversable)
+  deriving (Functor, Foldable, Traversable, Generic)
+
+instance (MetaSubst b a m, MetaSubst b (MetaVar v) m) => MetaSubst b (Telescope v a) m
 
 deriving instance (Show (MetaVar v), Show t) => Show (Telescope v t)
 
@@ -46,11 +53,11 @@ tl @> (v, t) = Snoc tl v t
 
 
 foldlWithVar :: (b -> MetaVar v -> a -> b) -> b -> Telescope v a -> b
-foldlWithVar _ b Empty = b
+foldlWithVar _ b Empty         = b
 foldlWithVar f b (Snoc tl x a) = f (foldlWithVar f b tl) x a
 
 foldrWithVar :: (MetaVar v -> a -> b -> b) -> b -> Telescope v a -> b
-foldrWithVar _ b Empty = b
+foldrWithVar _ b Empty         = b
 foldrWithVar f b (Snoc tl x a) = foldrWithVar f (f x a b) tl
 
 foldlMWithVar :: (Monad m) => (b -> MetaVar v -> a -> m b) -> b -> Telescope v a -> m b
@@ -64,6 +71,11 @@ foldrMWithVar _ b Empty = return b
 foldrMWithVar f b (Snoc tl x a) = do
   b' <- f x a b
   foldrMWithVar f b' tl
+
+filter :: (t -> Bool) -> Telescope v t -> Telescope v t
+filter _ Empty = Empty
+filter f (Snoc tl x a) | f a = Snoc (filter f tl) x a
+                       | otherwise = filter f tl
 
 toList :: Telescope v t -> [(MetaVar v,t)]
 toList = foldrWithVar (\x t -> (:) (x,t)) []
