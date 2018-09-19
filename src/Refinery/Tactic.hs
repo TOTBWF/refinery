@@ -7,9 +7,11 @@
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE UndecidableInstances       #-}
+
+{-# OPTIONS_GHC -Wno-simplifiable-class-constraints #-}
 module Refinery.Tactic
   (
-    Tactic , identity
+    Tactic(..) , identity
   , compose
   , all
   , each
@@ -42,37 +44,37 @@ newtype Tactic ext jdg m = Tactic { unTactic :: jdg -> m (ProofState ext jdg) }
 
 type MultiTactic ext jdg m = Tactic ext (ProofState ext jdg) m
 
-identity :: (MetaSubst ext ext m) => Tactic ext jdg m
+identity :: (Provable ext jdg, MonadName (MetaVar ext) m) => Tactic ext jdg m
 identity = Tactic $ goal
 
-compose :: (MetaSubst ext ext m, MetaSubst ext (MetaVar ext) m, MetaSubst ext jdg m) => Tactic ext jdg m -> MultiTactic ext jdg m -> Tactic ext jdg m
+compose :: (Provable ext jdg, Monad m) => Tactic ext jdg m -> MultiTactic ext jdg m -> Tactic ext jdg m
 compose (Tactic t) (Tactic mt) = Tactic $ fmap flatten . mt <=< t
 
 all :: (Monad m) => Tactic ext jdg m -> MultiTactic ext jdg m
 all t = Tactic $ traverse (unTactic t)
 
-instance (MetaSubst ext ext m, MetaSubst ext (MetaVar ext) m, MetaSubst ext jdg m) => Semigroup (Tactic ext jdg m) where
+instance (Provable ext jdg, Monad m) => Semigroup (Tactic ext jdg m) where
   t1 <> t2 = t1 `compose` (all t2)
 
-instance (MetaSubst ext ext m, MetaSubst ext (MetaVar ext) m, MetaSubst ext jdg m) => Monoid (Tactic ext jdg m) where
+instance (Provable ext jdg, MonadName (MetaVar ext) m) => Monoid (Tactic ext jdg m) where
   mempty = identity
 
-each :: (MetaSubst ext ext m) => [Tactic ext jdg m] -> MultiTactic ext jdg m
+each :: (Provable ext jdg, MonadName (MetaVar ext) m) => [Tactic ext jdg m] -> MultiTactic ext jdg m
 each ts = Tactic $ fmap snd . mapAccumLM applyTac ts
   where
     applyTac (Tactic t:ts) j = (ts,) <$> t j
     applyTac [] j            = ([],) <$> (unTactic identity) j
 
-(<..>) :: (MetaSubst ext ext m, MetaSubst ext (MetaVar ext) m, MetaSubst ext jdg m) => Tactic ext jdg m -> [Tactic ext jdg m] -> Tactic ext jdg m
+(<..>) :: (Provable ext jdg, MonadName (MetaVar ext) m) => Tactic ext jdg m -> [Tactic ext jdg m] -> Tactic ext jdg m
 t1 <..> ts = t1 `compose` (each ts)
 
 orElse :: (MonadPlus m) => Tactic ext jdg m -> Tactic ext jdg m -> Tactic ext jdg m
 orElse (Tactic t) (Tactic t') = Tactic $ \j -> (t j) `mplus` (t' j)
 
-try :: (MetaSubst ext ext m, MonadPlus m) => Tactic ext jdg m -> Tactic ext jdg m
+try :: (Provable ext jdg, MonadName (MetaVar ext) m, MonadPlus m) => Tactic ext jdg m -> Tactic ext jdg m
 try t = t `orElse` identity
 
-many :: (MetaSubst ext ext m, MetaSubst ext (MetaVar ext) m, MetaSubst ext jdg m, MonadPlus m) => Tactic ext jdg m -> Tactic ext jdg m
+many :: (Provable ext jdg, MonadName (MetaVar ext) m, MonadPlus m) => Tactic ext jdg m -> Tactic ext jdg m
 many t = try (t <> many t)
 
 
@@ -89,15 +91,15 @@ instance MonadTrans (TacticT ext jdg err) where
 runTacticT :: (Monad m) => TacticT ext jdg err m a -> m (Either err (a, Telescope ext jdg))
 runTacticT = runExceptT . runWriterT . unTacticT
 
-subgoal :: (MetaSubst ext ext m) => jdg -> TacticT ext jdg err m (MetaVar ext)
+subgoal :: (MonadName (MetaVar ext) m) => jdg -> TacticT ext jdg err m (MetaVar ext)
 subgoal j = do
   x <- lift $ fresh
   tell (Tl.singleton x j)
   return x
 
-tactic :: (Monad m) => (jdg -> TacticT ext jdg err m ext) -> Tactic ext jdg m
+tactic :: (Monad m, Show err) => (jdg -> TacticT ext jdg err m ext) -> Tactic ext jdg m
 tactic t = Tactic $ \j -> runTacticT (t j) >>= \case
-  Left err -> fail "Tactic Error!"
+  Left err -> fail $ show err
   Right (ext, goals) -> return $ ProofState goals ext
 
 solve :: (Monad m) => Tactic ext jdg m -> jdg -> m (ProofState ext jdg)

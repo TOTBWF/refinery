@@ -30,7 +30,7 @@ data Telescope v t
   | Snoc (Telescope v t) (MetaVar v) t
   deriving (Functor, Foldable, Traversable, Generic)
 
-instance (MetaSubst b a m, MetaSubst b (MetaVar v) m) => MetaSubst b (Telescope v a) m
+instance (Eq (MetaVar b), MetaSubst b a, MetaSubst b (MetaVar v)) => MetaSubst b (Telescope v a)
 
 deriving instance (Show (MetaVar v), Show t) => Show (Telescope v t)
 

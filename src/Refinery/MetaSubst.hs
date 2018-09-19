@@ -12,8 +12,8 @@ module Refinery.MetaSubst
   (
     SubstMeta(..)
   , MonadName(..)
+  , Evidence(..)
   , MetaVar(..)
-  , Extract(..)
   , MetaSubst(..)
   ) where
 
@@ -26,15 +26,15 @@ import           Data.Word
 data SubstMeta a b where
   SubstMeta :: (a ~ b) => MetaVar a -> SubstMeta a b
 
-class (Monad m) => MonadName v m | v -> m where
+class (Monad m) => MonadName v m | m -> v, v -> m where
   fresh :: m v
+
+class Evidence e where
+  hole :: MetaVar e -> e
 
 type family MetaVar a :: *
 
-class Extract a where
-  hole :: MetaVar a -> a
-
-class (MonadName (MetaVar b) m, Eq (MetaVar b), Extract b) => MetaSubst b a m where
+class MetaSubst b a where
 
   isMetaVar :: a -> Maybe (SubstMeta a b)
   isMetaVar _ = Nothing
@@ -42,12 +42,12 @@ class (MonadName (MetaVar b) m, Eq (MetaVar b), Extract b) => MetaSubst b a m wh
   metaSubst :: MetaVar b -> b -> a -> a
   metaSubsts :: [(MetaVar b, b)] -> a -> a
 
-  default metaSubst :: (Generic a, GMetaSubst b (Rep a)) => MetaVar b -> b -> a -> a
+  default metaSubst :: (Generic a, Eq (MetaVar b), GMetaSubst b (Rep a)) => MetaVar b -> b -> a -> a
   metaSubst n u x = case (isMetaVar x :: Maybe (SubstMeta a b)) of
     Just (SubstMeta m) | n == m -> u
     _                           -> to $ gmetaSubst n u (from x)
 
-  default metaSubsts :: (Generic a, GMetaSubst b (Rep a)) => [(MetaVar b, b)] -> a -> a
+  default metaSubsts :: (Generic a, Eq (MetaVar b), GMetaSubst b (Rep a)) => [(MetaVar b, b)] -> a -> a
   metaSubsts ss x = case (isMetaVar x :: Maybe (SubstMeta a b)) of
     Just (SubstMeta m) | Just (_,u) <- find ((== m)  . fst) ss -> u
     _ -> to $ gmetaSubsts ss (from x)
@@ -57,7 +57,7 @@ class GMetaSubst a f where
   gmetaSubst :: MetaVar a -> a -> f c -> f c
   gmetaSubsts :: [(MetaVar a, a)] -> f c -> f c
 
-instance (MetaSubst a b m) => GMetaSubst a (K1 i b) where
+instance (MetaSubst a b) => GMetaSubst a (K1 i b) where
   gmetaSubst nm val = K1 . metaSubst nm val . unK1
   gmetaSubsts ss = K1 . metaSubsts ss . unK1
 
@@ -85,28 +85,28 @@ instance (GMetaSubst a f, GMetaSubst a g) => GMetaSubst a (f :+: g) where
   gmetaSubsts ss (R1 g) = R1 $ gmetaSubsts ss g
 
 
-instance (Eq (MetaVar a), MonadName (MetaVar a) m, Extract a) => MetaSubst a Char m where
+instance MetaSubst a Char where
   metaSubst _ _ = id
   metaSubsts _ = id
 
-instance (Eq (MetaVar a), MonadName (MetaVar a) m, Extract a) => MetaSubst a Integer m where
+instance MetaSubst a Integer where
   metaSubst _ _ = id
   metaSubsts _ = id
 
-instance (Eq (MetaVar a), MonadName (MetaVar a) m, Extract a) => MetaSubst a (Ratio b) m where
+instance MetaSubst a (Ratio b) where
   metaSubst _ _ = id
   metaSubsts _ = id
 
-instance (Eq (MetaVar a), MonadName (MetaVar a) m, Extract a) => MetaSubst a Word8 m where
+instance MetaSubst a Word8 where
   metaSubst _ _ = id
   metaSubsts _ = id
 
-instance (Eq (MetaVar a), MonadName (MetaVar a) m, Extract a) => MetaSubst a Int m  where
+instance MetaSubst a Int  where
   metaSubst _ _ = id
   metaSubsts _ = id
 
 
-instance (MetaSubst c a m, MetaSubst c b m) => MetaSubst c (a,b) m
-instance (MetaSubst d a m, MetaSubst d b m, MetaSubst d c m) => MetaSubst d (a,b,c) m
-instance (MetaSubst b a m) => MetaSubst b (Maybe a) m
-instance (MetaSubst b a m) => MetaSubst b [a] m
+instance (Eq (MetaVar c), MetaSubst c a, MetaSubst c b) => MetaSubst c (a,b)
+instance (Eq (MetaVar d) ,MetaSubst d a, MetaSubst d b, MetaSubst d c) => MetaSubst d (a,b,c)
+instance (Eq (MetaVar b) ,MetaSubst b a) => MetaSubst b (Maybe a)
+instance (Eq (MetaVar b) ,MetaSubst b a) => MetaSubst b [a]
