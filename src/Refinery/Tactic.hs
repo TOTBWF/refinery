@@ -22,6 +22,7 @@ module Refinery.Tactic
   , RuleT
   , MonadRule(..)
   , rule
+  , Alt(..)
   ) where
 
 import Data.Functor.Alt
