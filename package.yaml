@@ -19,10 +19,11 @@ extra-source-files:
 # common to point users to the README.md file.
 description:         Please see the README on GitHub at <https://github.com/githubuser/refinery#readme>
 
-extra-source-files: examples/*.hs
-
 dependencies:
 - base >= 4.7 && < 5
+- pipes >= 4 && < 5
+- mmorph >= 1 && < 2
+- semigroupoids >= 5 && < 6
 - mtl >= 2 && < 3
 - containers >= 0.5 && < 0.6
 - unbound-generics >= 0.3 && < 0.4

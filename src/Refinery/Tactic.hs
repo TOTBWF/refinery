@@ -1,106 +1,100 @@
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE FunctionalDependencies     #-}
+-----------------------------------------------------------------------------
+-- |
+-- Module      :  Refinery.Tactic
+-- Copyright   :  (c) Reed Mullanix 2019
+-- License     :  BSD-style
+-- Maintainer  :  reedmullanix@gmail.com
+--
+--
+-- = Tactics
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE UndecidableInstances       #-}
-
-{-# OPTIONS_GHC -Wno-simplifiable-class-constraints #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Refinery.Tactic
-  (
-    Tactic(..) , identity
-  , compose
-  , all
-  , each
-  , (<..>)
-  , orElse
-  , try
-  , many
-  , TacticT
-  , subgoal
-  , tactic
-  , solve
+  ( TacticT
+  , runTacticT
+  , (<@>)
+  , Extract(..)
+  , RuleT
+  , MonadRule(..)
+  , rule
+  , Alt(..)
   ) where
 
-import           Prelude                     hiding (all)
+import Data.Functor.Alt
+import Control.Applicative
+import Control.Monad.Except
+import Control.Monad.Reader
+import Control.Monad.State.Strict
+import Control.Monad.Trans
+import Control.Monad.IO.Class
+import Control.Monad.Morph
 
-import           Control.Applicative         hiding (many)
-import           Control.Monad
-import           Control.Monad.Except
-import           Control.Monad.Reader
-import           Control.Monad.State
-import           Control.Monad.Writer
-import           Data.Traversable.Extensions
+import Data.Bifunctor
 
-import           Refinery.MetaSubst
-import           Refinery.Proof
-import           Refinery.Telescope          (Telescope, (@>))
-import qualified Refinery.Telescope          as Tl
+import Pipes.Core
+import Pipes.Lift (distribute)
 
-newtype Tactic ext jdg m = Tactic { unTactic :: jdg -> m (ProofState ext jdg) }
+import Refinery.ProofState
 
-type MultiTactic ext jdg m = Tactic ext (ProofState ext jdg) m
+-- | A monad transformer for tactics.
+newtype TacticT jdg ext m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext m) a }
+  deriving (Functor, Applicative, Monad, MonadIO)
 
-identity :: (Provable ext jdg, MonadName (MetaVar ext) m) => Tactic ext jdg m
-identity = Tactic $ goal
+instance (MonadError err m) => Alt (TacticT jdg ext m) where
+  (TacticT t1) <!> (TacticT t2) = TacticT $ t1 `catchError` (const t2)
 
-compose :: (Provable ext jdg, Monad m) => Tactic ext jdg m -> MultiTactic ext jdg m -> Tactic ext jdg m
-compose (Tactic t) (Tactic mt) = Tactic $ fmap flatten . mt <=< t
+instance MonadTrans (TacticT jdg ext) where
+  lift m = TacticT $ lift $ lift m
 
-all :: (Monad m) => Tactic ext jdg m -> MultiTactic ext jdg m
-all t = Tactic $ traverse (unTactic t)
-
-instance (Provable ext jdg, Monad m) => Semigroup (Tactic ext jdg m) where
-  t1 <> t2 = t1 `compose` (all t2)
-
-instance (Provable ext jdg, MonadName (MetaVar ext) m) => Monoid (Tactic ext jdg m) where
-  mempty = identity
-
-each :: (Provable ext jdg, MonadName (MetaVar ext) m) => [Tactic ext jdg m] -> MultiTactic ext jdg m
-each ts = Tactic $ fmap snd . mapAccumLM applyTac ts
+-- | Helper function for making "stateful" tactics like "<@>"
+stateful :: (Monad m) => TacticT jdg ext m () -> (jdg -> RuleT jdg ext (StateT s m) ext) -> s -> TacticT jdg ext m ()
+stateful (TacticT t) f s = TacticT $ StateT $ \j -> ProofStateT $
+  flip evalStateT s $ distribute $ action >\\ (hoist lift $ unProofStateT $ runStateT t j)
   where
-    applyTac (Tactic t:ts) j = (ts,) <$> t j
-    applyTac [] j            = ([],) <$> (unTactic identity) j
+    action (_, j) = (\j' -> request ((), j')) >\\ (unRuleT $ f j)
 
-(<..>) :: (Provable ext jdg, MonadName (MetaVar ext) m) => Tactic ext jdg m -> [Tactic ext jdg m] -> Tactic ext jdg m
-t1 <..> ts = t1 `compose` (each ts)
+(<@>) :: (Monad m) => TacticT jdg ext m () -> [TacticT jdg ext m ()] -> TacticT jdg ext m ()
+t <@> ts = stateful t applyTac (ts ++ repeat (pure ()))
+  where
+    applyTac j = do
+      t <- gets (unTacticT . head)
+      modify tail
+      RuleT $ hoist lift $ unProofStateT $ execStateT t j
 
-orElse :: (MonadPlus m) => Tactic ext jdg m -> Tactic ext jdg m -> Tactic ext jdg m
-orElse (Tactic t) (Tactic t') = Tactic $ \j -> (t j) `mplus` (t' j)
+-- | Runs a tactic, producing the extract, along with a list of unsolved subgoals.
+runTacticT :: (Monad m, Extract ext) => TacticT jdg ext m () -> jdg -> m (ext, [jdg])
+runTacticT (TacticT t) j =
+  fmap (second reverse) $ flip runStateT [] $ runEffect $ server +>> (hoist lift $ unProofStateT $ execStateT t j)
+  where
+    server :: (Monad m, Extract ext) => jdg -> Server jdg ext (StateT [jdg] m) ext
+    server j = do
+      modify (j:)
+      respond hole >>= server
 
-try :: (Provable ext jdg, MonadName (MetaVar ext) m, MonadPlus m) => Tactic ext jdg m -> Tactic ext jdg m
-try t = t `orElse` identity
+-- TODO: Figure out the proper way to have this work, there may need to be a monad in here somewhere.
+class Extract ext where
+  -- | An @Extract@ must have some concept of a hole, so that tactics that
+  -- have unsolved subgoals can still run to completion.
+  hole :: ext
 
-many :: (Provable ext jdg, MonadName (MetaVar ext) m, MonadPlus m) => Tactic ext jdg m -> Tactic ext jdg m
-many t = try (t <> many t)
+-- | A monad transformer for creating inference-rule tactics.
+newtype RuleT jdg ext m a = RuleT { unRuleT :: Client jdg ext m a }
+  deriving (Functor, Applicative, Monad, MonadState s, MonadError err, MonadIO, MonadTrans)
 
+class (Monad m) => MonadRule jdg ext m | m -> jdg, m -> ext where
+  subgoal :: jdg -> m ext
 
-newtype TacticT ext jdg err m a = TacticT { unTacticT :: WriterT (Telescope ext jdg) (ExceptT err m) a }
-  deriving
-    ( Functor , Applicative, Monad
-    , Alternative, MonadPlus
-    , MonadError err, MonadWriter (Telescope ext jdg), MonadState s
-    )
+instance (Monad m) => MonadRule jdg ext (RuleT jdg ext m) where
+  subgoal j = RuleT $ request j
 
-instance MonadTrans (TacticT ext jdg err) where
-  lift = TacticT . lift . lift
+instance (MonadRule jdg ext m) => MonadRule jdg ext (ReaderT env m) where
+  subgoal j = lift $ subgoal j
 
-runTacticT :: (Monad m) => TacticT ext jdg err m a -> m (Either err (a, Telescope ext jdg))
-runTacticT = runExceptT . runWriterT . unTacticT
-
-subgoal :: (MonadName (MetaVar ext) m) => jdg -> TacticT ext jdg err m (MetaVar ext)
-subgoal j = do
-  x <- lift $ fresh
-  tell (Tl.singleton x j)
-  return x
-
-tactic :: (Monad m, Show err) => (jdg -> TacticT ext jdg err m ext) -> Tactic ext jdg m
-tactic t = Tactic $ \j -> runTacticT (t j) >>= \case
-  Left err -> fail $ show err
-  Right (ext, goals) -> return $ ProofState goals ext
-
-solve :: (Monad m) => Tactic ext jdg m -> jdg -> m (ProofState ext jdg)
-solve (Tactic t) j = t j
+-- | Turn an inference rule into a tactic.
+rule :: (Monad m) => (jdg -> RuleT jdg ext m ext) -> TacticT jdg ext m ()
+rule r = TacticT $ StateT $ \j -> ProofStateT $ (\j' -> request ((), j')) >\\ unRuleT (r j)

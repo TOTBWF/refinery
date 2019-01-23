@@ -1,95 +1,115 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 module STLC where
 
-import GHC.Generics
-import Data.Typeable
-import Data.List (find)
-
-import Data.Map (Map)
-import qualified Data.Map as Map
-
 import Control.Monad.Except
+import Control.Monad.State
 
+import Data.List (find)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 
-import Unbound.Generics.LocallyNameless
+import Refinery.Tactic
 
-import Refinery.Hole
-import Refinery.Telescope (Telescope, (@>))
-import qualified Refinery.Telescope as Tl
-import qualified Refinery.Tactic as T
-import Refinery.Extract
+type Var = String
 
-type Var = Name Term
-
+-- Just a very simple version of Simply Typed Lambda Calculus,
+-- augmented with 'Hole' so that we can have
+-- incomplete extracts.
 data Term
-    = Var Var
-    | Hole (Ignore (MetaVar Term))
-    | Lam (Bind Var Term)
-    | App Term Term
-    deriving (Show, Typeable, Generic)
-
-instance Alpha Term
-instance Subst Term Term where
-    isvar (Var x) = Just $ SubstName x
-
-lam :: Var -> Term -> Term
-lam x t = Lam (bind x t)
-
-metaSubst' :: (LFresh m) => MetaVar Term -> Term -> Term -> m Term
-metaSubst' x e = \case
-  Hole (unignore -> x') | x == x' -> return e
-  Lam bnd -> lunbind bnd $ \(x',b) -> lam x' <$> metaSubst' x e b
-  App f a -> App <$> metaSubst' x e f <*> metaSubst' x e a
-  t -> return t
-
-metaSubsts' :: (LFresh m) => [(MetaVar Term, Term)] -> Term -> m Term
-metaSubsts' xs = \case
-  Hole (unignore -> x') -> case find (\(x,e) -> x == x') xs of
-    Just (_, e) -> return e
-    Nothing -> return $ Hole $ ignore x'
-  Lam bnd -> lunbind bnd $ \(x',b) -> lam x' <$> metaSubsts' xs b
-  App f a -> App <$> metaSubsts' xs f <*> metaSubsts' xs a
-  t -> return t
-
-
-instance MetaSubst Term Term where
-  metaSubst x e t = runLFreshM $ metaSubst' x e t
-  metaSubsts xs t = runLFreshM $ metaSubsts' xs t
-
-type TVar = Name Type
-
-data Type
-  = TVar TVar
-  | Type :-> Type
-  deriving (Show, Typeable, Generic)
-
-instance Alpha Type
-instance Subst Type Type where
-  isvar (TVar a) = Just $ SubstName a
-  isvar _ = Nothing
-
-data Judgement = J (Map Var Type) Type 
+  = Var Var
+  | Hole
+  | Lam Var Term
+  | Pair Term Term
   deriving (Show)
 
-type Tactic = T.Tactic Term Judgement (FreshMT (Except ()))
+instance Extract Term where
+  hole = Hole
 
-intro :: Tactic
-intro = T.tactic $ \case
-  J ctx (t1 :-> t2) -> do
-    x <- fresh $ s2n "x"
-    mx <- T.subgoal (J (Map.insert x t1 ctx) t2)
-    return $ lam x (Hole $ ignore mx)
+-- The type part of simply typed lambda calculus
+data Type
+  = TVar Var
+  | TArrow Type Type
+  | TPair Type Type
+  deriving (Show, Eq)
+
+-- A judgement is just a context, along with a goal
+data Judgement = Judgement [(Var, Type)] Type
+  deriving (Show)
+
+data TacticError
+  = UndefinedHypothesis Var
+  | GoalMismatch String Type
+  | UnsolvedSubgoals [Judgement]
+  deriving (Show)
+
+-- We need to keep track of the bound variables for fresh name generation
+
+type Tactic = TacticT Judgement Term (StateT (Map String Int) (Except TacticError)) ()
+
+fresh :: (MonadState (Map String Int) m) => String -> m Var
+fresh n = gets (Map.lookup n) >>= \case
+  Just i -> do
+    modify (Map.adjust (+1) n)
+    return (n ++ show i)
+  Nothing -> do
+    modify (Map.insert n 1)
+    return n
 
 assumption :: Tactic
-assumption = T.tactic $ \(J ctx t) -> 
-  case Map.keys $ Map.filter (aeq t) ctx of
-    (x:_) -> return $ Var x
-    [] -> throwError ()
+assumption = rule $ \(Judgement hy g) ->
+  case find ((== g) . snd) hy of
+    Just (n, _) -> return $ Var n
+    Nothing -> throwError $ GoalMismatch "assumption" g
 
-goal :: Type
-goal = let a = s2n "a" in (TVar a) :-> (TVar a)
+exact :: Var -> Tactic
+exact x = rule $ \(Judgement hy g) ->
+  case lookup x hy of
+    Just t -> if t == g then return (Var x) else throwError (GoalMismatch "exact" g)
+    Nothing -> throwError $ UndefinedHypothesis x
 
-tac = intro <> assumption
+intro :: Var -> Tactic
+intro x = rule $ \(Judgement hy g) ->
+  case g of
+    (TArrow a b) -> Lam x <$> subgoal (Judgement ((x, a):hy) b)
+    _ -> throwError $ GoalMismatch "intro" g
+
+intro_ :: Tactic
+intro_ = rule $ \(Judgement hy g) ->
+  case g of
+    (TArrow a b) -> do
+      x <- fresh "x"
+      Lam x <$> subgoal (Judgement ((x, a):hy) b)
+    _ -> throwError $ GoalMismatch "intro_" g
+
+split :: Tactic
+split = rule $ \(Judgement hy g) ->
+  case g of
+    (TPair l r) -> Pair <$> subgoal (Judgement hy l) <*> subgoal (Judgement hy r)
+    _ -> throwError $ GoalMismatch "split" g
+
+auto :: Tactic
+auto = do
+  intro_ <!> split <!> assumption
+  auto
+
+runTactic :: Type -> Tactic -> Either TacticError Term
+runTactic ty tac = runExcept $ flip evalStateT Map.empty $ runTacticT tac (Judgement [] ty) >>= \case
+  (t, []) -> return t
+  (_, sg) -> throwError $ UnsolvedSubgoals sg
+
+-- a -> b -> (b, c -> a)
+example1 = runTactic (TArrow (TVar "a") (TArrow (TVar "b") (TPair (TVar "b") (TArrow (TVar "c") (TVar "a"))))) $ do
+  intro "x"
+  intro "y"
+  split <@>
+    [ exact "y"
+    , do
+        intro "z"
+        exact "x"
+    ]
+example2 = runTactic (TArrow (TVar "a") (TArrow (TVar "b") (TPair (TVar "b") (TArrow (TVar "c") (TVar "a"))))) auto
