@@ -35,15 +35,10 @@ resolver: lts-12.5
 #  - wai
 packages:
 - .
-# - location:
-#     git: git@github.com:totbwf/unbound-generics.git
-#     commit: 2eef39b4fe346233351ed35a020e0101fdfb5583
 # Dependency packages to be pulled from upstream that are not in the resolver
 # using the same syntax as the packages field.
 # (e.g., acme-missiles-0.3)
 extra-deps: 
-- github: totbwf/unbound-generics
-  commit: 22f8a9e10762439c93b21f4548142a8da11624bf
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
