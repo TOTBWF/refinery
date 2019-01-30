@@ -2,7 +2,19 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
-module Refinery.ProofState where
+-----------------------------------------------------------------------------
+-- |
+-- Module      :  Refinery.ProofState
+-- Copyright   :  (c) Reed Mullanix 2019
+-- License     :  BSD-style
+-- Maintainer  :  reedmullanix@gmail.com
+--
+--
+module Refinery.ProofState
+  ( ProofStateT(..)
+  , axiom
+  )
+where
 
 import Control.Applicative
 import Control.Monad
