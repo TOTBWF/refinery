@@ -16,8 +16,10 @@
 module Refinery.Tactic
   ( TacticT
   , runTacticT
-  , (<@>),
-    MonadExtract(..)
+  , (<@>)
+  , try
+  , many_
+  , MonadExtract(..)
   , RuleT
   , MonadRule(..)
   , rule
@@ -54,6 +56,12 @@ t <@> ts = stateful t applyTac (ts ++ repeat (pure ()))
       t <- gets (unTacticT . head)
       modify tail
       RuleT $ hoist lift $ unProofStateT $ execStateT t j
+
+try :: (MonadError err m) => TacticT jdg ext m () -> TacticT jdg ext m ()
+try t = t <!> pure ()
+
+many_ :: (MonadError err m) => TacticT jdg ext m () -> TacticT jdg ext m ()
+many_ t = try (t >> many_ t)
 
 -- | Runs a tactic, producing the extract, along with a list of unsolved subgoals.
 runTacticT :: (MonadExtract ext m) => TacticT jdg ext m () -> jdg -> m (ext, [jdg])
