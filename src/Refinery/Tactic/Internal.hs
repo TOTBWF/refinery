@@ -17,9 +17,10 @@
 -- This module is considered __internal__, and can
 -- change at any given time.
 module Refinery.Tactic.Internal
-  (TacticT(..)
+  ( TacticT(..)
   , stateful
   , RuleT(..)
+  , mapRuleT
   )
 where
 
@@ -64,4 +65,8 @@ stateful (TacticT t) f s = TacticT $ StateT $ \j -> ProofStateT $
 
 -- | A @'RuleT'@ is a monad transformer for creating inference rules.
 newtype RuleT jdg ext m a = RuleT { unRuleT :: Client jdg ext m a }
-  deriving (Functor, Applicative, Monad, MonadState s, MonadError err, MonadIO, MonadTrans)
+  deriving (Functor, Applicative, Monad, MonadReader env, MonadState s, MonadError err, MonadIO, MonadTrans)
+
+-- | Map the unwrapped computation using the given function
+mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext m a -> RuleT jdg ext m b
+mapRuleT f (RuleT m) = RuleT $ m >>= (lift . f . return)
