@@ -18,6 +18,7 @@
 -- change at any given time.
 module Refinery.Tactic.Internal
   ( TacticT(..)
+  , mapTacticT
   , stateful
   , RuleT(..)
   , mapRuleT
@@ -49,6 +50,10 @@ import Refinery.ProofState
 -- * @a@ - The return value. This to make @'TacticT'@ a monad, and will always be @'()'@
 newtype TacticT jdg ext m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext m) a }
   deriving (Functor, Applicative, Monad, MonadIO)
+
+-- | Map the unwrapped computation using the given function
+mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext m a -> TacticT jdg ext m b
+mapTacticT f (TacticT m) = TacticT $ m >>= (lift . lift . f . return)
 
 instance (MonadError err m) => Alt (TacticT jdg ext m) where
   (TacticT t1) <!> (TacticT t2) = TacticT $ t1 `catchError` (const t2)
