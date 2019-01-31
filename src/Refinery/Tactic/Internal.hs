@@ -49,7 +49,8 @@ import Refinery.ProofState
 -- * @m@ - The base monad.
 -- * @a@ - The return value. This to make @'TacticT'@ a monad, and will always be @'()'@
 newtype TacticT jdg ext m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext m) a }
-  deriving (Functor, Applicative, Monad, MonadIO)
+  deriving (Functor, Applicative, Monad, MonadReader env, MonadError err, MonadIO)
+
 
 -- | Map the unwrapped computation using the given function
 mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext m a -> TacticT jdg ext m b
@@ -60,6 +61,10 @@ instance (MonadError err m) => Alt (TacticT jdg ext m) where
 
 instance MonadTrans (TacticT jdg ext) where
   lift m = TacticT $ lift $ lift m
+
+instance (MonadState s m) => MonadState s (TacticT jdg ext m) where
+  get = lift get
+  put = lift . put
 
 -- | Helper function for making "stateful" tactics like "<@>"
 stateful :: (Monad m) => TacticT jdg ext m () -> (jdg -> RuleT jdg ext (StateT s m) ext) -> s -> TacticT jdg ext m ()
