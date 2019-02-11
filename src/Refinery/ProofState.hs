@@ -19,6 +19,7 @@ where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans
+import Control.Monad.Catch
 import Control.Monad.Except
 import Control.Monad.Reader.Class
 import Control.Monad.State.Class
@@ -48,6 +49,12 @@ instance (MonadIO m) => MonadIO (ProofStateT ext m) where
 instance (MonadError err m) => MonadError err (ProofStateT ext m) where
   throwError e = ProofStateT $ lift $ throwError e
   catchError (ProofStateT m) h = ProofStateT $ catchError m (unProofStateT . h)
+
+instance (MonadThrow m) => MonadThrow (ProofStateT ext m) where
+  throwM e = ProofStateT $ lift $ throwM e
+
+instance (MonadCatch m) => MonadCatch (ProofStateT ext m) where
+  catch (ProofStateT m) h = ProofStateT $ catch m (unProofStateT . h)
 
 instance (MonadReader env m) => MonadReader env (ProofStateT ext m) where
   ask = lift ask

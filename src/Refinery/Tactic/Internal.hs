@@ -28,6 +28,7 @@ where
 import Data.Functor.Alt
 import Control.Applicative
 import Control.Monad.Except
+import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Trans
@@ -49,8 +50,7 @@ import Refinery.ProofState
 -- * @m@ - The base monad.
 -- * @a@ - The return value. This to make @'TacticT'@ a monad, and will always be @'()'@
 newtype TacticT jdg ext m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext m) a }
-  deriving (Functor, Applicative, Monad, MonadReader env, MonadError err, MonadIO)
-
+  deriving (Functor, Applicative, Monad, MonadReader env, MonadError err, MonadIO, MonadThrow, MonadCatch)
 
 -- | Map the unwrapped computation using the given function
 mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext m a -> TacticT jdg ext m b
