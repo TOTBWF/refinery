@@ -75,7 +75,7 @@ stateful (TacticT t) f s = TacticT $ StateT $ \j -> ProofStateT $
 
 -- | A @'RuleT'@ is a monad transformer for creating inference rules.
 newtype RuleT jdg ext m a = RuleT { unRuleT :: Client jdg ext m a }
-  deriving (Functor, Applicative, Monad, MonadReader env, MonadState s, MonadError err, MonadIO, MonadTrans)
+  deriving (Functor, Applicative, Monad, MonadReader env, MonadState s, MonadError err, MonadIO, MonadThrow, MonadCatch, MonadTrans)
 
 -- | Map the unwrapped computation using the given function
 mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext m a -> RuleT jdg ext m b
