@@ -13,6 +13,7 @@
 module Refinery.ProofState
   ( ProofStateT(..)
   , axiom
+  , mapExtract
   )
 where
 
@@ -66,3 +67,6 @@ instance (MonadState s m) => MonadState s (ProofStateT ext m) where
 
 axiom :: (Monad m) => ext -> ProofStateT ext m jdg
 axiom e = ProofStateT $ return e
+
+mapExtract :: (Monad m) => (ext -> ext') -> (ext' -> ext) -> ProofStateT ext m jdg -> ProofStateT ext' m jdg
+mapExtract into out p = ProofStateT $ fmap into ((\j ->  fmap out $ request j) >\\ (unProofStateT p))

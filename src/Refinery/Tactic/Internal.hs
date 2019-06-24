@@ -1,9 +1,11 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE UndecidableInstances #-}
 -----------------------------------------------------------------------------
 -- |
@@ -20,6 +22,7 @@ module Refinery.Tactic.Internal
   ( TacticT(..)
   , mapTacticT
   , stateful
+  , asRule
   , RuleT(..)
   , mapRuleT
   )
@@ -38,7 +41,7 @@ import Control.Monad.Morph
 import Data.Bifunctor
 
 import Pipes.Core
-import Pipes.Lift (distribute)
+import Pipes.Lift (evalStateP, runStateP)
 
 import Refinery.ProofState
 
@@ -50,7 +53,15 @@ import Refinery.ProofState
 -- * @m@ - The base monad.
 -- * @a@ - The return value. This to make @'TacticT'@ a monad, and will always be @'()'@
 newtype TacticT jdg ext m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext m) a }
-  deriving (Functor, Applicative, Monad, MonadReader env, MonadError err, MonadIO, MonadThrow, MonadCatch)
+  deriving ( Functor
+           , Applicative
+           , Monad
+           , MonadReader env
+           , MonadError err
+           , MonadIO
+           , MonadThrow
+           , MonadCatch
+           )
 
 -- | Map the unwrapped computation using the given function
 mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext m a -> TacticT jdg ext m b
@@ -67,15 +78,31 @@ instance (MonadState s m) => MonadState s (TacticT jdg ext m) where
   put = lift . put
 
 -- | Helper function for making "stateful" tactics like "<@>"
-stateful :: (Monad m) => TacticT jdg ext m () -> (jdg -> RuleT jdg ext (StateT s m) ext) -> s -> TacticT jdg ext m ()
+stateful :: (Monad m) => TacticT jdg ext m a -> (jdg -> RuleT jdg ext (StateT s m) ext) -> s -> TacticT jdg ext m a
 stateful (TacticT t) f s = TacticT $ StateT $ \j -> ProofStateT $
-  flip evalStateT s $ distribute $ action >\\ (hoist lift $ unProofStateT $ runStateT t j)
+  evalStateP s $ action >\\ (hoist lift $ unProofStateT $ runStateT t j)
   where
-    action (_, j) = (\j' -> request ((), j')) >\\ (unRuleT $ f j)
+    action (a, j) = (\j' -> request (a, j')) >\\ (unRuleT $ f j)
+
+-- | Transforms a tactic into a rule. Useful for doing things with @'stateful'@.
+asRule :: (Monad m) => jdg -> TacticT jdg ext m a -> RuleT jdg ext m ext
+asRule j t = RuleT $ unProofStateT $ execStateT (unTacticT t) j
 
 -- | A @'RuleT'@ is a monad transformer for creating inference rules.
 newtype RuleT jdg ext m a = RuleT { unRuleT :: Client jdg ext m a }
-  deriving (Functor, Applicative, Monad, MonadReader env, MonadState s, MonadError err, MonadIO, MonadThrow, MonadCatch, MonadTrans)
+  deriving ( Functor
+           , Applicative
+           , Monad
+           , MonadReader env
+           , MonadState s
+           , MonadError err
+           , MonadIO
+           , MonadThrow
+           , MonadCatch
+           , MonadTrans
+           , MFunctor
+           )
+
 
 -- | Map the unwrapped computation using the given function
 mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext m a -> RuleT jdg ext m b
