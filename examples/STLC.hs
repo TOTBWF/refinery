@@ -55,7 +55,7 @@ data TacticError
 
 {- Fresh variable generation -}
 newtype FreshT m a = FreshT { unFreshT :: StateT (Map String Int) m a }
-  deriving (Functor, Applicative, Monad, MonadError err, MonadRule jdg ext)
+  deriving (Functor, Applicative, Monad, MonadError err, MonadRule jdg ext, MonadProvable jdg)
 
 runFreshT :: (Monad m) => FreshT m a -> m a
 runFreshT (FreshT m) = evalStateT m (Map.empty)
@@ -80,7 +80,7 @@ instance (MonadFresh m) => MonadExtract Term m where
   hole = Hole <$> fresh "_"
 
 {- Tactics -}
-type Tactic = TacticT Judgement Term (FreshT (Except TacticError)) ()
+type Tactic = TacticT Judgement Term (FreshT (ProvableT Judgement (Except TacticError))) ()
 
 assumption :: Tactic
 assumption = rule $ \(Judgement hy g) ->
@@ -120,7 +120,7 @@ auto = do
   auto
 
 runTactic :: Type -> Tactic -> Either TacticError Term
-runTactic ty tac = runExcept $ runFreshT $ runTacticT tac (Judgement [] ty) >>= \case
+runTactic ty tac = runExcept $ runProvableT $ runFreshT $ runTacticT tac (Judgement [] ty) >>= \case
   (t, []) -> return t
   (_, sg) -> throwError $ UnsolvedSubgoals sg
 

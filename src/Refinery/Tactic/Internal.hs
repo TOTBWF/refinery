@@ -7,6 +7,8 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE TypeFamilies #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Refinery.Tactic.Internal
@@ -23,13 +25,19 @@ module Refinery.Tactic.Internal
   , mapTacticT
   , stateful
   , asRule
+  , MonadRule(..)
   , RuleT(..)
   , mapRuleT
+  , MonadProvable(..)
+  , ProvableT(..)
+  , Provable
+  , runProvable
   )
 where
 
 import Data.Functor.Alt
 import Control.Applicative
+import Control.Monad.Identity
 import Control.Monad.Except
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -54,14 +62,22 @@ import Refinery.ProofState
 -- * @a@ - The return value. This to make @'TacticT'@ a monad, and will always be @'()'@
 newtype TacticT jdg ext m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext m) a }
   deriving ( Functor
-           , Applicative
-           , Monad
            , MonadReader env
            , MonadError err
            , MonadIO
            , MonadThrow
            , MonadCatch
            )
+
+instance (MonadProvable jdg m) => Applicative (TacticT jdg ext m) where
+  pure a = TacticT $ StateT $ proving >=> \j -> pure (a, j)
+  (<*>) = ap
+
+instance (MonadProvable jdg m) => Monad (TacticT jdg ext m) where
+  return = pure
+  t >>= k = TacticT $ StateT $ proving >=> \j -> do
+    (a, j') <- runStateT (unTacticT t) j
+    runStateT (unTacticT $ k a) =<< proving j'
 
 -- | Map the unwrapped computation using the given function
 mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext m a -> TacticT jdg ext m b
@@ -73,7 +89,7 @@ instance (MonadError err m) => Alt (TacticT jdg ext m) where
 instance MonadTrans (TacticT jdg ext) where
   lift m = TacticT $ lift $ lift m
 
-instance (MonadState s m) => MonadState s (TacticT jdg ext m) where
+instance (MonadProvable jdg m, MonadState s m) => MonadState s (TacticT jdg ext m) where
   get = lift get
   put = lift . put
 
@@ -107,3 +123,42 @@ newtype RuleT jdg ext m a = RuleT { unRuleT :: Client jdg ext m a }
 -- | Map the unwrapped computation using the given function
 mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext m a -> RuleT jdg ext m b
 mapRuleT f (RuleT m) = RuleT $ m >>= (lift . f . return)
+
+class (Monad m) => MonadRule jdg ext m | m -> jdg, m -> ext where
+  -- | Create a subgoal, and return the resulting extract.
+  subgoal :: jdg -> m ext
+  default subgoal :: (MonadTrans t, MonadRule jdg ext m1, m ~ t m1) => jdg -> m ext
+  subgoal = lift . subgoal
+
+instance (Monad m) => MonadRule jdg ext (RuleT jdg ext m) where
+  subgoal j = RuleT $ request j
+
+instance (MonadRule jdg ext m) => MonadRule jdg ext (ReaderT env m)
+instance (MonadRule jdg ext m) => MonadRule jdg ext (StateT env m)
+instance (MonadRule jdg ext m) => MonadRule jdg ext (ExceptT env m)
+instance (MonadRule jdg ext m) => MonadRule jdg ext (ProvableT env m)
+
+class (Monad m) => MonadProvable jdg m | m -> jdg where
+  -- | Applies a transformation of goals at every step of the tactic.
+  proving :: jdg -> m jdg
+  default proving :: (MonadTrans t, MonadProvable jdg m1, m ~ t m1) => jdg -> m jdg
+  proving = lift . proving
+
+instance (MonadProvable jdg m) => MonadProvable jdg (ProofStateT ext m)
+instance (MonadProvable jdg m) => MonadProvable jdg (ReaderT r m)
+instance (MonadProvable jdg m) => MonadProvable jdg (StateT s m)
+instance (MonadProvable jdg m) => MonadProvable jdg (ExceptT err m)
+instance (Monad m) => MonadProvable jdg (ProvableT jdg m) where
+  proving = pure
+
+-- | Helper newtype for when you don't have any need for the mechanisms of MonadProvable.
+newtype ProvableT jdg m a = ProvableT { runProvableT :: m a }
+  deriving (Functor, Applicative, Monad, MonadIO, MonadState s, MonadError err)
+
+type Provable jdg a = ProvableT jdg Identity a
+
+instance MonadTrans (ProvableT jdg) where
+  lift = ProvableT
+
+runProvable :: Provable jdg a -> a
+runProvable = runIdentity . runProvableT

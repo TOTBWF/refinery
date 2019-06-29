@@ -28,9 +28,13 @@ module Refinery.Tactic
   , forSubgoals
   -- * Tactic Creation
   , MonadExtract(..)
-  , RuleT
   , MonadRule(..)
+  , RuleT
   , rule
+  , MonadProvable(..)
+  , ProvableT(..)
+  , Provable
+  , runProvable
   -- * Re-Exports
   , Alt(..)
   ) where
@@ -57,7 +61,7 @@ import Refinery.Tactic.Internal
 -- When the number of subgoals is greater than the number of provided tactics,
 -- the identity tactic is applied to the remainder. When the number of subgoals is
 -- less than the number of provided tactics, the remaining tactics are ignored.
-(<@>) :: (Monad m) => TacticT jdg ext m () -> [TacticT jdg ext m ()] -> TacticT jdg ext m ()
+(<@>) :: (MonadProvable jdg m) => TacticT jdg ext m () -> [TacticT jdg ext m ()] -> TacticT jdg ext m ()
 t <@> ts = stateful t applyTac (ts ++ repeat (pure ()))
   where
     applyTac j = do
@@ -66,11 +70,11 @@ t <@> ts = stateful t applyTac (ts ++ repeat (pure ()))
       hoist lift $ asRule j tac
 
 -- | Tries to run a tactic, backtracking on failure
-try :: (MonadError err m) => TacticT jdg ext m () -> TacticT jdg ext m ()
+try :: (MonadProvable jdg m, MonadError err m) => TacticT jdg ext m () -> TacticT jdg ext m ()
 try t = t <!> pure ()
 
 -- | Runs a tactic repeatedly until it fails
-many_ :: (MonadError err m) => TacticT jdg ext m () -> TacticT jdg ext m ()
+many_ :: (MonadProvable jdg m, MonadError err m) => TacticT jdg ext m () -> TacticT jdg ext m ()
 many_ t = try (t >> many_ t)
 
 -- | Get the current goal
@@ -80,14 +84,14 @@ goal = TacticT $ get
 
 -- | @choice err ts@ tries to apply a series of tactics @ts@, and commits to the
 -- 1st tactic that succeeds. If they all fail, then @err@ is thrown
-choice :: (MonadError err m) => err -> [TacticT jdg ext m a] -> TacticT jdg ext m a
+choice :: (MonadProvable jdg m, MonadError err m) => err -> [TacticT jdg ext m a] -> TacticT jdg ext m a
 choice err [] = throwError err
 choice err (t:ts) = t <!> choice err ts
 
 -- | @progress eq err t@ applies the tactic @t@, and checks to see if the
 -- resulting subgoals are all equal to the initial goal by using @eq@. If they
 -- are, it throws @err@.
-progress :: (MonadError err m) => (jdg -> jdg -> Bool) -> err ->  TacticT jdg ext m a -> TacticT jdg ext m a
+progress :: (MonadProvable jdg m, MonadError err m) => (jdg -> jdg -> Bool) -> err ->  TacticT jdg ext m a -> TacticT jdg ext m a
 progress eq err t = do
   j <- goal
   a <- t
@@ -95,7 +99,7 @@ progress eq err t = do
   if j `eq` j' then pure a else throwError err
 
 -- | Apply the first tactic, and then apply the second tactic focused on the @n@th subgoal.
-focus :: (Monad m) => TacticT jdg ext m () -> Int -> TacticT jdg ext m () -> TacticT jdg ext m ()
+focus :: (MonadProvable jdg m, Monad m) => TacticT jdg ext m () -> Int -> TacticT jdg ext m () -> TacticT jdg ext m ()
 focus t ix t' = stateful t applyTac 0
   where
     applyTac j = do
@@ -136,18 +140,6 @@ instance (MonadExtract ext m) => MonadExtract ext (ReaderT env m)
 instance (MonadExtract ext m) => MonadExtract ext (ExceptT err m)
 instance (MonadExtract ext m) => MonadExtract ext (RuleT jdg ext m)
 
-class (Monad m) => MonadRule jdg ext m | m -> jdg, m -> ext where
-  -- | Create a subgoal, and return the resulting extract.
-  subgoal :: jdg -> m ext
-  default subgoal :: (MonadTrans t, MonadRule jdg ext m1, m ~ t m1) => jdg -> m ext
-  subgoal = lift . subgoal
-
-instance (Monad m) => MonadRule jdg ext (RuleT jdg ext m) where
-  subgoal j = RuleT $ request j
-
-instance (MonadRule jdg ext m) => MonadRule jdg ext (ReaderT env m)
-instance (MonadRule jdg ext m) => MonadRule jdg ext (StateT env m)
-instance (MonadRule jdg ext m) => MonadRule jdg ext (ExceptT env m)
 
 -- | Turn an inference rule into a tactic.
 rule :: (Monad m) => (jdg -> RuleT jdg ext m ext) -> TacticT jdg ext m ()
