@@ -27,6 +27,7 @@ import Control.Monad.State.Class
 import Control.Monad.IO.Class
 
 import Pipes.Core
+import Pipes.Internal
 
 newtype ProofStateT ext m jdg = ProofStateT { unProofStateT :: Client jdg ext m ext }
 
@@ -50,6 +51,19 @@ instance (MonadIO m) => MonadIO (ProofStateT ext m) where
 instance (MonadError err m) => MonadError err (ProofStateT ext m) where
   throwError e = ProofStateT $ lift $ throwError e
   catchError (ProofStateT m) h = ProofStateT $ catchError m (unProofStateT . h)
+
+instance (MonadPlus m) => Alternative (ProofStateT ext m) where
+  empty = lift empty
+  (ProofStateT p1) <|> (ProofStateT p2) = ProofStateT (go p1)
+    where
+      go (Request a' fa) = Request a' (go . fa)
+      go (Respond b fb') = Respond b (go . fb')
+      go (Pure r) = Pure r
+      go (M m) = M ((go <$> m) <|> pure p2)
+
+instance (MonadPlus m) => MonadPlus (ProofStateT ext m) where
+  mzero = empty
+  mplus = (<|>)
 
 instance (MonadThrow m) => MonadThrow (ProofStateT ext m) where
   throwM e = ProofStateT $ lift $ throwM e

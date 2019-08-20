@@ -35,7 +35,6 @@ module Refinery.Tactic.Internal
   )
 where
 
-import Data.Functor.Alt
 import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Except
@@ -49,6 +48,7 @@ import Control.Monad.Morph
 import Data.Bifunctor
 
 import Pipes.Core
+import Pipes.Internal
 import Pipes.Lift (evalStateP, runStateP)
 
 import Refinery.ProofState
@@ -62,6 +62,8 @@ import Refinery.ProofState
 -- * @a@ - The return value. This to make @'TacticT'@ a monad, and will always be @'()'@
 newtype TacticT jdg ext m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext m) a }
   deriving ( Functor
+           , Alternative
+           , MonadPlus
            , MonadReader env
            , MonadError err
            , MonadIO
@@ -82,9 +84,6 @@ instance (MonadProvable jdg m) => Monad (TacticT jdg ext m) where
 -- | Map the unwrapped computation using the given function
 mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext m a -> TacticT jdg ext m b
 mapTacticT f (TacticT m) = TacticT $ m >>= (lift . lift . f . return)
-
-instance (MonadError err m) => Alt (TacticT jdg ext m) where
-  (TacticT t1) <!> (TacticT t2) = TacticT $ t1 `catchError` (const t2)
 
 instance MonadTrans (TacticT jdg ext) where
   lift m = TacticT $ lift $ lift m
@@ -118,6 +117,19 @@ newtype RuleT jdg ext m a = RuleT { unRuleT :: Client jdg ext m a }
            , MonadTrans
            , MFunctor
            )
+
+instance MonadPlus m => Alternative (RuleT jdg ext m) where
+  empty = lift empty
+  (RuleT r1) <|> (RuleT r2) = RuleT (go r1)
+    where
+      go (Request a' fa) = Request a' (go . fa)
+      go (Respond b fb') = Respond b (go . fb')
+      go (Pure r) = Pure r
+      go (M m) = M ((go <$> m) <|> pure r2)
+
+instance MonadPlus m => MonadPlus (RuleT jdg ext m) where
+  mzero = empty
+  mplus = (<|>)
 
 
 -- | Map the unwrapped computation using the given function

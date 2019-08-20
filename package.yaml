@@ -1,18 +1,18 @@
 name:                refinery
-version:             0.1.0.0
-github:              "githubuser/refinery"
+version:             0.2.0.0
+github:              "totbwf/refinery"
 license:             BSD3
-author:              "Author name here"
-maintainer:          "example@example.com"
-copyright:           "2018 Author name here"
+author:              "Reed Mullanix"
+maintainer:          "reedmullanix@gmail.com"
+copyright:           "2019 Reed Mullanix"
 
 extra-source-files:
 - README.md
 - ChangeLog.md
 
 # Metadata used when publishing your package
-# synopsis:            Short description of your package
-# category:            Web
+synopsis:            Toolkit for building proof automation systems
+category: Language
 
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
@@ -20,11 +20,10 @@ extra-source-files:
 description:         Please see the README on GitHub at <https://github.com/githubuser/refinery#readme>
 
 dependencies:
-- base >= 4.7
+- base >= 4.7 && < 5
 - exceptions >= 0.10
 - pipes >= 4
 - mmorph >= 1
-- semigroupoids >= 5
 - mtl >= 2
 - containers >= 0.5
 

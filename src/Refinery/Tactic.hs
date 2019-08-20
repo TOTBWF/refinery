@@ -35,11 +35,8 @@ module Refinery.Tactic
   , ProvableT(..)
   , Provable
   , runProvable
-  -- * Re-Exports
-  , Alt(..)
   ) where
 
-import Data.Functor.Alt
 import Control.Applicative
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -70,11 +67,11 @@ t <@> ts = stateful t applyTac (ts ++ repeat (pure ()))
       hoist lift $ asRule j tac
 
 -- | Tries to run a tactic, backtracking on failure
-try :: (MonadProvable jdg m, MonadError err m) => TacticT jdg ext m () -> TacticT jdg ext m ()
-try t = t <!> pure ()
+try :: (MonadProvable jdg m, MonadPlus m) => TacticT jdg ext m () -> TacticT jdg ext m ()
+try t = t <|> pure ()
 
 -- | Runs a tactic repeatedly until it fails
-many_ :: (MonadProvable jdg m, MonadError err m) => TacticT jdg ext m () -> TacticT jdg ext m ()
+many_ :: (MonadProvable jdg m, MonadPlus m) => TacticT jdg ext m () -> TacticT jdg ext m ()
 many_ t = try (t >> many_ t)
 
 -- | Get the current goal
@@ -84,9 +81,9 @@ goal = TacticT $ get
 
 -- | @choice err ts@ tries to apply a series of tactics @ts@, and commits to the
 -- 1st tactic that succeeds. If they all fail, then @err@ is thrown
-choice :: (MonadProvable jdg m, MonadError err m) => err -> [TacticT jdg ext m a] -> TacticT jdg ext m a
+choice :: (MonadProvable jdg m, MonadPlus m, MonadError err m) => err -> [TacticT jdg ext m a] -> TacticT jdg ext m a
 choice err [] = throwError err
-choice err (t:ts) = t <!> choice err ts
+choice err (t:ts) = t <|> choice err ts
 
 -- | @progress eq err t@ applies the tactic @t@, and checks to see if the
 -- resulting subgoals are all equal to the initial goal by using @eq@. If they
