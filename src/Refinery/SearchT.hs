@@ -10,7 +10,8 @@
 module Refinery.SearchT
   ( SearchT
   , observeT
-  , observeManyT
+  , observeAllT
+  , asumWith
   ) where
 
 import Control.Applicative
@@ -19,6 +20,7 @@ import Control.Monad.Logic.Class
 import Control.Monad.Identity
 
 import Data.List.NonEmpty
+import Data.Either
 
 newtype SearchT err m a = SearchT { unSearchT :: forall r. (a -> m r -> m r) -> (a -> m r) -> (err -> m r) -> m r}
 type Search err a = SearchT err Identity a
@@ -28,18 +30,24 @@ instance Functor (SearchT err m) where
 
 instance Applicative (SearchT err m) where
   pure a = SearchT $ \mk sk fk -> sk a
-  f <*> a = SearchT $ \mk sk fk -> unSearchT f (\g sk' -> unSearchT a (mk . g) (sk . g) (const sk')) (\g -> unSearchT a (mk . g) (sk . g) fk) fk
+  f <*> a = SearchT $ \mk sk fk -> unSearchT f (\g sk' -> unSearchT a (mk . g) (\a -> mk (g a) sk') fk) (\g -> unSearchT a (mk . g) (sk . g) fk) fk
 
+-- FIXME: This may have to be Alt rather than Alternative?
+-- There also could be some merit to a non-accumulating err (Just use Last tho)
+-- THis makes me think that semigroup makes even more sense...
 instance (Monoid err) => Alternative (SearchT err m) where
   empty = SearchT $ \_ _ fk -> fk mempty
-  f1 <|> f2 = SearchT $ \mk sk fk -> unSearchT f1 mk sk (\err -> unSearchT f2 mk sk (\err' -> fk (err <> err')))
+  f1 <|> f2 = SearchT $ \mk sk fk -> unSearchT f1 mk (\a -> mk a $ unSearchT f2 mk sk fk) (\err -> unSearchT f2 mk sk (\err' -> fk (err <> err')))
 
 instance Monad (SearchT err m) where
   return = pure
-  m >>= f = SearchT $ \mk sk fk -> unSearchT m (\a sk' -> unSearchT (f a) mk sk (const sk')) (\a -> unSearchT (f a) mk sk fk) fk
+  m >>= f = SearchT $ \mk sk fk -> unSearchT m (\a sk' -> unSearchT (f a) mk (\b -> mk b sk') fk) (\a -> unSearchT (f a) mk sk fk) fk
 
 instance MonadTrans (SearchT err) where
-  lift m = SearchT $ \mk sk fk -> m >>= \a -> sk a
+  lift m = SearchT $ \mk sk fk -> m >>= sk
+
+instance (MonadIO m) => MonadIO (SearchT err m) where
+  liftIO m = SearchT $ \mk sk fk -> liftIO m >>= sk
 
 instance (Monoid err) => MonadPlus (SearchT err m) where
   mzero = empty
@@ -56,11 +64,17 @@ instance MonadError err (SearchT err m) where
 observeT :: (Monad m) => SearchT err m a -> m (Either err a)
 observeT st = unSearchT st (const . return . Right) (return . Right) (return . Left)
 
-observeManyT :: (Monad m) => SearchT err m a -> m (Either err (NonEmpty a))
-observeManyT st = unSearchT st (\a as -> fmap (fmap (cons a)) as) (return . Right . singleton) (return . Left)
+observeAllT :: (Monad m) => SearchT err m a -> m (Either err (NonEmpty a))
+observeAllT st = unSearchT st (\a as -> fmap (return . either (const $ singleton a) (cons a)) as) (return . Right . singleton) (return . Left)
   where
     singleton :: a -> NonEmpty a
     singleton a = a :| []
 
-observeMany :: Search err a -> Either err (NonEmpty a)
-observeMany = runIdentity . observeManyT
+observe :: Search err a -> Either err a
+observe = runIdentity . observeT
+
+observeAll :: Search err a -> Either err (NonEmpty a)
+observeAll = runIdentity . observeAllT
+
+asumWith :: (Foldable t, Alternative f) => f a -> t (f a) -> f a
+asumWith = foldr (<|>)

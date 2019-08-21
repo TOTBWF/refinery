@@ -42,6 +42,7 @@ import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Trans
+import Control.Monad.Logic
 import Control.Monad.IO.Class
 import Control.Monad.Morph
 
@@ -117,20 +118,6 @@ newtype RuleT jdg ext m a = RuleT { unRuleT :: Client jdg ext m a }
            , MonadTrans
            , MFunctor
            )
-
-instance MonadPlus m => Alternative (RuleT jdg ext m) where
-  empty = lift empty
-  (RuleT r1) <|> (RuleT r2) = RuleT (go r1)
-    where
-      go (Request a' fa) = Request a' (go . fa)
-      go (Respond b fb') = Respond b (go . fb')
-      go (Pure r) = Pure r
-      go (M m) = M ((go <$> m) <|> pure r2)
-
-instance MonadPlus m => MonadPlus (RuleT jdg ext m) where
-  mzero = empty
-  mplus = (<|>)
-
 
 -- | Map the unwrapped computation using the given function
 mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext m a -> RuleT jdg ext m b

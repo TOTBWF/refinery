@@ -58,8 +58,8 @@ instance (MonadPlus m) => Alternative (ProofStateT ext m) where
     where
       go (Request a' fa) = Request a' (go . fa)
       go (Respond b fb') = Respond b (go . fb')
-      go (Pure r) = Pure r
-      go (M m) = M ((go <$> m) <|> pure p2)
+      go (Pure r) = M (pure (Pure r) <|> pure p2)
+      go (M m) = M (fmap go m)
 
 instance (MonadPlus m) => MonadPlus (ProofStateT ext m) where
   mzero = empty

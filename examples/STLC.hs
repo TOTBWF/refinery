@@ -8,23 +8,32 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE LambdaCase #-}
 module STLC where
 
-import Control.Monad.Except
+import Control.Applicative
+import Control.Monad.Error
 import Control.Monad.State.Strict
 import Control.Monad.Trans
+import Control.Applicative
 import Data.Functor.Identity
+import Data.Foldable
 
 import Data.String (IsString)
 import Data.List (find)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
 import Refinery.Tactic
+import Refinery.SearchT
 
 newtype Var = V { unVar :: String }
-  deriving (Show, Eq, Ord, IsString)
+  deriving newtype (Show, Eq, Ord, IsString)
 
 -- Just a very simple version of Simply Typed Lambda Calculus,
 -- augmented with 'Hole' so that we can have
@@ -55,7 +64,7 @@ data TacticError
 
 {- Fresh variable generation -}
 newtype FreshT m a = FreshT { unFreshT :: StateT (Map String Int) m a }
-  deriving (Functor, Applicative, Monad, MonadError err, MonadRule jdg ext, MonadProvable jdg)
+  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadError err, MonadRule jdg ext, MonadProvable jdg)
 
 runFreshT :: (Monad m) => FreshT m a -> m a
 runFreshT (FreshT m) = evalStateT m (Map.empty)
@@ -79,26 +88,34 @@ instance (MonadFresh m) => MonadFresh (RuleT jdg ext m)
 instance (MonadFresh m) => MonadExtract Term m where
   hole = Hole <$> fresh "_"
 
+deriving anyclass instance (MonadFresh m) => MonadFresh (SearchT err m)
+deriving anyclass instance (MonadProvable jdg m) => MonadProvable jdg (SearchT err m)
+
 {- Tactics -}
-type Tactic = TacticT Judgement Term (FreshT (ProvableT Judgement (Except TacticError))) ()
+type Tactic = TacticT Judgement Term (SearchT [TacticError] (FreshT (ProvableT Judgement IO))) ()
 
 assumption :: Tactic
-assumption = rule $ \(Judgement hy g) ->
-  case find ((== g) . snd) hy of
-    Just (n, _) -> return $ Var n
-    Nothing -> throwError $ GoalMismatch "assumption" g
+assumption = do
+  (Judgement hy g) <- goal
+  asumWith (throwError [GoalMismatch "assumption" g]) $ fmap (\(v, _) -> rule $ \_ -> return $ Var v) $ filter ((== g) . snd) hy
+  -- asumWith (throwError $ [GoalMismatch "assumption" g]) $ fmap (return . Var . fst) $ filter ((== g) . snd) hy
+  -- traverse_ (\e -> throwError $ [UndefinedHypothesis e]) $ fmap fst $ filter ((== g) . snd) hy
+
+  -- case find ((== g) . snd) hy of
+  --   Just (n, _) -> return $ Var n
+  --   Nothing -> throwError $ [GoalMismatch "assumption" g]
 
 exact :: Var -> Tactic
 exact x = rule $ \(Judgement hy g) ->
   case lookup x hy of
-    Just t -> if t == g then return (Var x) else throwError (GoalMismatch "exact" g)
-    Nothing -> throwError $ UndefinedHypothesis x
+    Just t -> if t == g then return (Var x) else throwError [GoalMismatch "exact" g]
+    Nothing -> throwError $ [UndefinedHypothesis x]
 
 intro :: Var -> Tactic
 intro x = rule $ \(Judgement hy g) ->
   case g of
     (TArrow a b) -> Lam x <$> subgoal (Judgement ((x, a):hy) b)
-    _ -> throwError $ GoalMismatch "intro" g
+    _ -> throwError $ [GoalMismatch "intro" g]
 
 intro_ :: Tactic
 intro_ = rule $ \(Judgement hy g) ->
@@ -106,23 +123,23 @@ intro_ = rule $ \(Judgement hy g) ->
     (TArrow a b) -> do
       x <- fresh "x"
       Lam x <$> subgoal (Judgement ((x, a):hy) b)
-    _ -> throwError $ GoalMismatch "intro_" g
+    _ -> throwError $ [GoalMismatch "intro_" g]
 
 split :: Tactic
 split = rule $ \(Judgement hy g) ->
   case g of
     (TPair l r) -> Pair <$> subgoal (Judgement hy l) <*> subgoal (Judgement hy r)
-    _ -> throwError $ GoalMismatch "split" g
+    _ -> throwError $ [GoalMismatch "split" g]
 
 auto :: Tactic
 auto = do
-  intro_ <!> split <!> assumption
+  intro_ <|> split <|> assumption
   auto
 
-runTactic :: Type -> Tactic -> Either TacticError Term
-runTactic ty tac = runExcept $ runProvableT $ runFreshT $ runTacticT tac (Judgement [] ty) >>= \case
+runTactic :: Type -> Tactic -> IO (Either [TacticError] (NonEmpty Term))
+runTactic ty tac = runProvableT $ runFreshT $ observeManyT $ runTacticT tac (Judgement [] ty) >>= \case
   (t, []) -> return t
-  (_, sg) -> throwError $ UnsolvedSubgoals sg
+  (_, sg) -> throwError $ [UnsolvedSubgoals sg]
 
 example1 = runTactic (TArrow (TVar "a") (TArrow (TVar "b") (TPair (TVar "b") (TArrow (TVar "c") (TVar "a"))))) $ do
   intro "x"
@@ -133,4 +150,10 @@ example1 = runTactic (TArrow (TVar "a") (TArrow (TVar "b") (TPair (TVar "b") (TA
         intro "z"
         exact "x"
     ]
+-- a -> b -> (b, c -> a)
 example2 = runTactic (TArrow (TVar "a") (TArrow (TVar "b") (TPair (TVar "b") (TArrow (TVar "c") (TVar "a"))))) auto
+
+example3 = runTactic (TArrow (TVar "a") (TArrow (TVar "a") (TVar "a"))) $ do
+  intro "y"
+  intro "x"
+  exact "x" <|> exact "y"

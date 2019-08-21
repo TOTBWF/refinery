@@ -22,6 +22,8 @@ description:         Please see the README on GitHub at <https://github.com/gith
 dependencies:
 - base >= 4.7 && < 5
 - exceptions >= 0.10
+- semigroupoids >= 5
+- logict >= 0.6
 - pipes >= 4
 - mmorph >= 1
 - mtl >= 2
