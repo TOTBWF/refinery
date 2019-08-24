@@ -97,13 +97,7 @@ type Tactic = TacticT Judgement Term (SearchT [TacticError] (FreshT (ProvableT J
 assumption :: Tactic
 assumption = do
   (Judgement hy g) <- goal
-  asumWith (throwError [GoalMismatch "assumption" g]) $ fmap (\(v, _) -> rule $ \_ -> return $ Var v) $ filter ((== g) . snd) hy
-  -- asumWith (throwError $ [GoalMismatch "assumption" g]) $ fmap (return . Var . fst) $ filter ((== g) . snd) hy
-  -- traverse_ (\e -> throwError $ [UndefinedHypothesis e]) $ fmap fst $ filter ((== g) . snd) hy
-
-  -- case find ((== g) . snd) hy of
-  --   Just (n, _) -> return $ Var n
-  --   Nothing -> throwError $ [GoalMismatch "assumption" g]
+  asumWith (throwError [GoalMismatch "assumption" g]) $ fmap (exact . fst) hy
 
 exact :: Var -> Tactic
 exact x = rule $ \(Judgement hy g) ->
@@ -133,11 +127,16 @@ split = rule $ \(Judgement hy g) ->
 
 auto :: Tactic
 auto = do
-  intro_ <|> split <|> assumption
-  auto
+  g <- goal
+  liftIO $ print g
+  -- try (intro_ >> auto)
+  -- try (split >> auto)
+  many_ intro_
+  assumption
+  -- intro_ <|> split <|> assumption
 
 runTactic :: Type -> Tactic -> IO (Either [TacticError] (NonEmpty Term))
-runTactic ty tac = runProvableT $ runFreshT $ observeManyT $ runTacticT tac (Judgement [] ty) >>= \case
+runTactic ty tac = runProvableT $ runFreshT $ observeAllT $ runTacticT tac (Judgement [] ty) >>= \case
   (t, []) -> return t
   (_, sg) -> throwError $ [UnsolvedSubgoals sg]
 
@@ -154,6 +153,9 @@ example1 = runTactic (TArrow (TVar "a") (TArrow (TVar "b") (TPair (TVar "b") (TA
 example2 = runTactic (TArrow (TVar "a") (TArrow (TVar "b") (TPair (TVar "b") (TArrow (TVar "c") (TVar "a"))))) auto
 
 example3 = runTactic (TArrow (TVar "a") (TArrow (TVar "a") (TVar "a"))) $ do
-  intro "y"
-  intro "x"
-  exact "x" <|> exact "y"
+  many_ intro_
+  assumption
+  -- intro "x"
+  -- intro "y"
+  -- exact "x" <|> exact "y"
+  --

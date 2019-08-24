@@ -43,6 +43,7 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Trans
 import Control.Monad.IO.Class
+import Control.Monad.Logic.Class
 import Control.Monad.Morph
 
 import Data.Bifunctor
@@ -67,11 +68,11 @@ t <@> ts = stateful t applyTac (ts ++ repeat (pure ()))
       hoist lift $ asRule j tac
 
 -- | Tries to run a tactic, backtracking on failure
-try :: (MonadProvable jdg m, MonadPlus m) => TacticT jdg ext m () -> TacticT jdg ext m ()
+try :: (MonadProvable jdg m, MonadLogic m) => TacticT jdg ext m () -> TacticT jdg ext m ()
 try t = t <|> pure ()
 
 -- | Runs a tactic repeatedly until it fails
-many_ :: (MonadProvable jdg m, MonadPlus m) => TacticT jdg ext m () -> TacticT jdg ext m ()
+many_ :: (MonadProvable jdg m, MonadLogic m) => TacticT jdg ext m () -> TacticT jdg ext m ()
 many_ t = try (t >> many_ t)
 
 -- | Get the current goal
@@ -81,7 +82,7 @@ goal = TacticT $ get
 
 -- | @choice err ts@ tries to apply a series of tactics @ts@, and commits to the
 -- 1st tactic that succeeds. If they all fail, then @err@ is thrown
-choice :: (MonadProvable jdg m, MonadPlus m, MonadError err m) => err -> [TacticT jdg ext m a] -> TacticT jdg ext m a
+choice :: (MonadProvable jdg m, MonadLogic m, MonadError err m) => err -> [TacticT jdg ext m a] -> TacticT jdg ext m a
 choice err [] = throwError err
 choice err (t:ts) = t <|> choice err ts
 

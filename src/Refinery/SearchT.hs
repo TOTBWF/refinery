@@ -22,7 +22,10 @@ import Control.Monad.Identity
 import Data.List.NonEmpty
 import Data.Either
 
+data List a r = Cons a r | Nil
+
 newtype SearchT err m a = SearchT { unSearchT :: forall r. (a -> m r -> m r) -> (a -> m r) -> (err -> m r) -> m r}
+
 type Search err a = SearchT err Identity a
 
 instance Functor (SearchT err m) where
@@ -78,3 +81,5 @@ observeAll = runIdentity . observeAllT
 
 asumWith :: (Foldable t, Alternative f) => f a -> t (f a) -> f a
 asumWith = foldr (<|>)
+
+test = observeAll (throwError "foo" <|> return 1)

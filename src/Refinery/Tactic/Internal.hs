@@ -93,6 +93,11 @@ instance (MonadProvable jdg m, MonadState s m) => MonadState s (TacticT jdg ext 
   get = lift get
   put = lift . put
 
+
+-- blorp :: (Monad m) => TacticT jdg ext m a -> (jdg -> RuleT jdg ext m ext) -> TacticT jdg ext m a
+-- blorp (TacticT t) f = TacticT $ StateT $ \j -> ProofStateT $
+--   _h
+
 -- | Helper function for making "stateful" tactics like "<@>"
 stateful :: (Monad m) => TacticT jdg ext m a -> (jdg -> RuleT jdg ext (StateT s m) ext) -> s -> TacticT jdg ext m a
 stateful (TacticT t) f s = TacticT $ StateT $ \j -> ProofStateT $
