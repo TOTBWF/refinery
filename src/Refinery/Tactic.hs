@@ -115,30 +115,34 @@ forSubgoals t f = TacticT $ StateT $ \j -> ProofStateT $
       request (a, j)
 
 -- | Runs a tactic, producing the extract, along with a list of unsolved subgoals.
-runTacticT :: (MonadExtract ext m) => TacticT jdg ext m () -> jdg -> m (ext, [jdg])
+runTacticT :: (MonadExtract jdg ext m) => TacticT jdg ext m () -> jdg -> m (ext, [jdg])
 runTacticT (TacticT t) j =
   fmap (second reverse) $ flip runStateT [] $ runEffect $ server +>> (hoist lift $ unProofStateT $ execStateT t j)
   where
-    server :: (MonadExtract ext m) => jdg -> Server jdg ext (StateT [jdg] m) ext
+    server :: (MonadExtract jdg ext m) => jdg -> Server jdg ext (StateT [jdg] m) ext
     server j = do
       modify (j:)
-      h <- hole
+      h <- hole j
       respond h >>= server
 
-class (Monad m) => MonadExtract ext m | m -> ext where
+class (Monad m) => MonadExtract jdg ext m | m -> ext where
   -- | Generates a "hole" of type @ext@, which should represent
   -- an incomplete extract.
-  hole :: m ext
-  default hole :: (MonadTrans t, MonadExtract ext m1, m ~ t m1) => m ext
-  hole = lift hole
+  hole :: jdg -> m ext
+  default hole :: (MonadTrans t, MonadExtract jdg ext m1, m ~ t m1) => jdg -> m ext
+  hole = lift . hole
 
-instance (MonadExtract ext m) => MonadExtract ext (Proxy a' a b' b m)
-instance (MonadExtract ext m) => MonadExtract ext (StateT s m)
-instance (MonadExtract ext m) => MonadExtract ext (ReaderT env m)
-instance (MonadExtract ext m) => MonadExtract ext (ExceptT err m)
-instance (MonadExtract ext m) => MonadExtract ext (RuleT jdg ext m)
+instance (MonadExtract jdg ext m) => MonadExtract jdg ext (Proxy a' a b' b m)
+instance (MonadExtract jdg ext m) => MonadExtract jdg ext (StateT s m)
+instance (MonadExtract jdg ext m) => MonadExtract jdg ext (ReaderT env m)
+instance (MonadExtract jdg ext m) => MonadExtract jdg ext (ExceptT err m)
+instance (MonadExtract jdg ext m) => MonadExtract jdg ext (RuleT jdg ext m)
 
 
 -- | Turn an inference rule into a tactic.
 rule :: (Monad m) => (jdg -> RuleT jdg ext m ext) -> TacticT jdg ext m ()
 rule r = TacticT $ StateT $ \j -> ProofStateT $ (\j' -> request ((), j')) >\\ unRuleT (r j)
+
+-- | Turn an inference rule using ReaderT into a tactic.
+readerRule :: (Monad m) => ReaderT jdg (RuleT jdg ext m) ext -> TacticT jdg ext m ()
+readerRule r = TacticT $ StateT $ \j -> ProofStateT $ (\j' -> request ((), j')) >\\ (unRuleT $ runReaderT r j)

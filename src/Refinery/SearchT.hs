@@ -6,6 +6,7 @@
 --
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE RankNTypes #-}
 module Refinery.SearchT
   ( SearchT
@@ -14,6 +15,8 @@ module Refinery.SearchT
   , asumWith
   ) where
 
+import Data.Functor.Alt
+import Data.Semigroup hiding (Alt)
 import Control.Applicative
 import Control.Monad.Except
 import Control.Monad.Logic.Class
@@ -22,29 +25,29 @@ import Control.Monad.Identity
 import Data.List.NonEmpty
 import Data.Either
 
-data List a r = Cons a r | Nil
-
-newtype SearchT err m a = SearchT { unSearchT :: forall r. (a -> m r -> m r) -> (a -> m r) -> (err -> m r) -> m r}
+newtype SearchT err m a = SearchT { unSearchT :: forall r. (m r -> m r -> m r) -> (a -> m r) -> (err -> m r) -> m r}
 
 type Search err a = SearchT err Identity a
 
 instance Functor (SearchT err m) where
-  fmap f st = SearchT $ \mk sk fk -> unSearchT st (mk . f) (sk . f) fk
+  fmap f st = SearchT $ \mk sk fk -> unSearchT st mk (sk . f) fk
 
 instance Applicative (SearchT err m) where
-  pure a = SearchT $ \mk sk fk -> sk a
-  f <*> a = SearchT $ \mk sk fk -> unSearchT f (\g sk' -> unSearchT a (mk . g) (\a -> mk (g a) sk') fk) (\g -> unSearchT a (mk . g) (sk . g) fk) fk
+  pure a = SearchT $ \_ sk _ -> sk a
+  f <*> a = SearchT $ \mk sk fk -> unSearchT f mk (\g -> unSearchT a mk (sk . g) fk) fk
 
--- FIXME: This may have to be Alt rather than Alternative?
--- There also could be some merit to a non-accumulating err (Just use Last tho)
--- THis makes me think that semigroup makes even more sense...
+
+instance Alt (SearchT err m) where
+  f1 <!> f2 = SearchT $ \mk sk fk ->
+    unSearchT f1 mk (\a -> mk (sk a) (unSearchT f2 mk sk fk)) fk
+
 instance (Monoid err) => Alternative (SearchT err m) where
-  empty = SearchT $ \_ _ fk -> fk mempty
-  f1 <|> f2 = SearchT $ \mk sk fk -> unSearchT f1 mk (\a -> mk a $ unSearchT f2 mk sk fk) (\err -> unSearchT f2 mk sk (\err' -> fk (err <> err')))
+  empty = SearchT $ \mk sk fk -> fk mempty
+  (<|>) = (<!>)
 
 instance Monad (SearchT err m) where
   return = pure
-  m >>= f = SearchT $ \mk sk fk -> unSearchT m (\a sk' -> unSearchT (f a) mk (\b -> mk b sk') fk) (\a -> unSearchT (f a) mk sk fk) fk
+  m >>= f = SearchT $ \mk sk fk -> unSearchT m mk (\a -> unSearchT (f a) mk sk fk) fk
 
 instance MonadTrans (SearchT err) where
   lift m = SearchT $ \mk sk fk -> m >>= sk
@@ -57,29 +60,43 @@ instance (Monoid err) => MonadPlus (SearchT err m) where
   mplus = (<|>)
 
 instance (Monoid err, Monad m) => MonadLogic (SearchT err m) where
-  msplit m = lift $ unSearchT m (\a sk -> return $ Just (a, lift sk >>= reflect)) (\a -> return $ Just (a, throwError mempty)) (const $ return Nothing)
-  once m = SearchT $ \mk sk fk -> unSearchT m (\a _ -> sk a) sk fk
+  msplit m = lift $ unSearchT m (liftA2 combine) (\a -> return $ Just (a, empty)) (const $ return Nothing)
+      where
+        combine :: (Monoid err) => Maybe (a, SearchT err m a) -> Maybe (a, SearchT err m a) -> Maybe (a, SearchT err m a)
+        combine Nothing r = r
+        combine l Nothing = l
+        combine (Just (a, f1)) (Just (a', f2)) = Just (a, f1 <|> pure a' <|> f2)
 
 instance MonadError err (SearchT err m) where
   throwError err = SearchT $ \mk sk fk -> fk err
   catchError m h = SearchT $ \mk sk fk -> unSearchT m mk sk (\err -> unSearchT (h err) mk sk fk)
 
 observeT :: (Monad m) => SearchT err m a -> m (Either err a)
-observeT st = unSearchT st (const . return . Right) (return . Right) (return . Left)
+observeT st = unSearchT st const (return . Right) (return . Left)
 
-observeAllT :: (Monad m) => SearchT err m a -> m (Either err (NonEmpty a))
-observeAllT st = unSearchT st (\a as -> fmap (return . either (const $ singleton a) (cons a)) as) (return . Right . singleton) (return . Left)
+observeAllT :: (Monoid err, Monad m) => SearchT err m a -> m (Either err (NonEmpty a))
+observeAllT st = unSearchT st (liftA2 combine) (return . Right . singleton) (return . Left)
   where
+    combine :: (Semigroup m, Semigroup err) => Either err m -> Either err m -> Either err m
+    combine (Left e) (Left e') = Left (e <> e')
+    combine (Right m) (Right m') = Right (m <> m')
+    combine (Right m) _ = Right m
+    combine _ (Right m) = Right m
+
     singleton :: a -> NonEmpty a
     singleton a = a :| []
 
 observe :: Search err a -> Either err a
 observe = runIdentity . observeT
 
-observeAll :: Search err a -> Either err (NonEmpty a)
+observeAll :: (Monoid err) => Search err a -> Either err (NonEmpty a)
 observeAll = runIdentity . observeAllT
 
 asumWith :: (Foldable t, Alternative f) => f a -> t (f a) -> f a
 asumWith = foldr (<|>)
 
-test = observeAll (throwError "foo" <|> return 1)
+
+newtype ContE err m a = ContE { runContE :: forall r. (err -> m r) -> (a -> m r) -> m r }
+
+-- ContE err (State s) a
+-- forall r. (err -> State s r) -> (a -> State s r) -> State s r

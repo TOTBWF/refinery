@@ -152,10 +152,4 @@ example1 = runTactic (TArrow (TVar "a") (TArrow (TVar "b") (TPair (TVar "b") (TA
 -- a -> b -> (b, c -> a)
 example2 = runTactic (TArrow (TVar "a") (TArrow (TVar "b") (TPair (TVar "b") (TArrow (TVar "c") (TVar "a"))))) auto
 
-example3 = runTactic (TArrow (TVar "a") (TArrow (TVar "a") (TVar "a"))) $ do
-  many_ intro_
-  assumption
-  -- intro "x"
-  -- intro "y"
-  -- exact "x" <|> exact "y"
-  --
+example3 = runTactic (TArrow (TVar "a") (TArrow (TVar "a") (TVar "a"))) auto

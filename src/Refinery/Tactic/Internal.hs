@@ -72,6 +72,7 @@ newtype TacticT jdg ext m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext
            , MonadCatch
            )
 
+
 instance (MonadProvable jdg m) => Applicative (TacticT jdg ext m) where
   pure a = TacticT $ StateT $ proving >=> \j -> pure (a, j)
   (<*>) = ap
@@ -94,9 +95,9 @@ instance (MonadProvable jdg m, MonadState s m) => MonadState s (TacticT jdg ext 
   put = lift . put
 
 
--- blorp :: (Monad m) => TacticT jdg ext m a -> (jdg -> RuleT jdg ext m ext) -> TacticT jdg ext m a
--- blorp (TacticT t) f = TacticT $ StateT $ \j -> ProofStateT $
---   _h
+withSubgoals :: (Monad m) => RuleT jdg ext m a -> (jdg -> RuleT jdg ext m ext) -> RuleT jdg ext m a
+withSubgoals r f = RuleT $ (unRuleT . f) >\\ (unRuleT r)
+
 
 -- | Helper function for making "stateful" tactics like "<@>"
 stateful :: (Monad m) => TacticT jdg ext m a -> (jdg -> RuleT jdg ext (StateT s m) ext) -> s -> TacticT jdg ext m a
