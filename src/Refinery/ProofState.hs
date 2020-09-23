@@ -125,8 +125,14 @@ instance (MonadIO m) => MonadIO (ProofStateT ext err m) where
 instance (MonadThrow m) => MonadThrow (ProofStateT ext err m) where
   throwM = lift . throwM
 
--- instance (MonadCatch m) => MonadCatch (ProofStateT ext m) where
---   catch (ProofStateT m) h = ProofStateT $ catch m (unProofStateT . h)
+instance (MonadCatch m) => MonadCatch (ProofStateT err ext m) where
+    catch (Subgoal goal k) handle = Subgoal goal (flip catch handle . k)
+    catch (Effect m) handle = Effect . catch m $ pure . handle
+    catch (Alt p1 p2) handle = catch p1 handle <|> catch p2 handle
+    catch Empty _ = Empty
+    catch (Failure err) handle = Failure err
+    catch (Axiom e) handle = (Axiom e)
+
 
 instance (Monad m) => MonadError err (ProofStateT ext err m) where
     throwError = Failure
