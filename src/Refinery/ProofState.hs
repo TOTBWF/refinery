@@ -100,7 +100,7 @@ class (Monad m) => MonadExtract ext m | m -> ext where
   default hole :: (MonadTrans t, MonadExtract ext m1, m ~ t m1) => m ext
   hole = lift hole
 
-collect :: (MonadExtract ext m) => ProofStateT ext err m goal -> m (Either err [(ext, [goal])])
+collect :: (Semigroup err, MonadExtract ext m) => ProofStateT ext err m goal -> m (Either err [(ext, [goal])])
 collect (Subgoal goal k) = do
     h <- hole
     pure $ Right $ [(h, [goal])]
@@ -108,11 +108,16 @@ collect (Effect m)       = collect =<< m
 collect (Alt p1 p2)      = do
     e1 <- collect p1
     e2 <- collect p1
-    -- FIXME: Sketchy but who cares
-    pure (e1 <> e2)
+    pure $ accumEither e1 e2
 collect Empty            = pure $ Right []
 collect (Failure err)    = pure $ Left err
 collect (Axiom ext)      = pure $ Right [(ext, [])]
+
+accumEither :: (Semigroup a, Semigroup b) => Either a b -> Either a b -> Either a b
+accumEither (Left a1) (Left a2)   = Left (a1 <> a2)
+accumEither (Right b1) (Right b2) = Right (b1 <> b2)
+accumEither Left{} x              = x
+accumEither x Left{}              = x
 
 instance (MonadIO m) => MonadIO (ProofStateT ext err m) where
   liftIO = lift . liftIO
