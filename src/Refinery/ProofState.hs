@@ -75,15 +75,15 @@ instance Monad m => Monad (ProofStateT ext err m) where
 instance MonadTrans (ProofStateT ext err) where
     lift m = Effect (fmap pure m)
 
-instance (Monad m, Monoid err) => Alternative (ProofStateT ext err m) where
+instance (Monad m) => Alternative (ProofStateT ext err m) where
     empty = Empty
     (<|>) = Alt
 
-instance (Monad m, Monoid err) => MonadPlus (ProofStateT ext err m) where
+instance (Monad m) => MonadPlus (ProofStateT ext err m) where
     mzero = empty
     mplus = (<|>)
 
-instance (Monad m, Monoid err) => MonadLogic (ProofStateT ext err m) where
+instance (Monad m) => MonadLogic (ProofStateT ext err m) where
     msplit (Subgoal goal k) = Subgoal (Just (goal, Empty)) (msplit . k)
     msplit (Effect m)       = Effect (fmap msplit m)
     msplit (Alt p1 p2)      = msplit p1 >>= \case
@@ -190,9 +190,8 @@ instance (Monad m) => MonadError err (ProofStateT ext err m) where
     throwError = Failure
     catchError (Subgoal goal k) handle = Subgoal goal (flip catchError handle . k)
     catchError (Effect m) handle = Effect (fmap (flip catchError handle) m)
-    -- FIXME: ???
-    catchError (Alt p1 p2) handle = _catchAlt
-    catchError Empty handle = _catchEmpty
+    catchError (Alt p1 p2) handle = catchError p1 handle <|> catchError p2 handle
+    catchError Empty _ = Empty
     catchError (Failure err) handle = handle err
     catchError (Axiom e) handle = (Axiom e)
 
@@ -209,8 +208,15 @@ instance (MonadState s m) => MonadState s (ProofStateT ext err m) where
   get = lift get
   put = lift . put
 
--- axiom :: (Monad m) => ext -> ProofStateT ext m jdg
--- axiom e = ProofStateT $ return e
+axiom :: (Monad m) => ext -> ProofStateT ext err m jdg
+axiom = Axiom
 
--- mapExtract :: (Monad m) => (ext -> ext') -> (ext' -> ext) -> ProofStateT ext m jdg -> ProofStateT ext' m jdg
--- mapExtract into out p = ProofStateT $ fmap into ((\j ->  fmap out $ request j) >\\ (unProofStateT p))
+mapExtract :: (Monad m) => (ext -> ext') -> (ext' -> ext) -> ProofStateT ext err m jdg -> ProofStateT ext' err m jdg
+mapExtract into out = \case
+    Subgoal goal k -> Subgoal goal $ mapExtract into out . k . out
+    Effect m -> Effect (fmap (mapExtract into out) m)
+    Alt t1 t2 -> Alt (mapExtract into out t1) (mapExtract into out t2)
+    Empty -> Empty
+    Failure err -> Failure err
+    Axiom ext -> Axiom $ into ext
+
