@@ -1,15 +1,18 @@
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DerivingStrategies    #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE UndecidableInstances  #-}
-{-# OPTIONS_GHC -fno-warn-orphans  #-}
-{-# OPTIONS_GHC -Wredundant-constraints  #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE UndecidableInstances       #-}
+{-# OPTIONS_GHC -Wredundant-constraints #-}
+{-# OPTIONS_GHC -fno-warn-orphans       #-}
 
 module Main where
 
+import Control.Monad
+import Control.Monad.Logic.Class
 import Control.Monad.State.Strict (StateT (..))
 import Data.Function
 import Data.Functor.Identity
@@ -113,6 +116,7 @@ main = hspec $ do
     testBatch $ alternative (undefined :: ProofStateTest Int)
     testBatch $ monad       (undefined :: ProofStateTest (Int, Int, Int))
     testBatch $ monadPlus   (undefined :: ProofStateTest (Int, Int))
+    testBatch $ monadLogic  (undefined :: ProofStateTest (Int, Int))
   describe "RuleT" $ do
     testBatch $ functor     (undefined :: RuleTest (Int, Int, Int))
     testBatch $ applicative (undefined :: RuleTest (Int, Int, Int))
@@ -123,4 +127,43 @@ main = hspec $ do
     testBatch $ alternative (undefined :: TacticTest ())
     testBatch $ monad       (undefined :: TacticTest ((), (), ()))
     testBatch $ monadPlus   (undefined :: TacticTest ((), ()))
+
+
+monadLogic
+    :: forall m a b
+     . (CoArbitrary a, Arbitrary (m b), Arbitrary a, Arbitrary (m a), MonadPlus m, MonadLogic m, EqProp (m b), EqProp (m (Maybe (a, m a))))
+    => m (a, b)
+    -> TestBatch
+monadLogic _ =
+  ( "MonadLogic laws"
+  , [ ("msplit mzero", msplit @m @a mzero =-= return Nothing)
+    , ("msplit mplus", property $ do
+        a <- arbitrary
+        m <- arbitrary
+        pure $ property $
+          msplit @m @a (return a `mplus` m) =-= return (Just (a, m))
+      )
+    , ("ifte return", property $ do
+        a <- arbitrary
+        th <- arbitrary
+        el <- arbitrary
+        pure $ property $
+          ifte @m @a @b (return a) th el =-= th a
+      )
+    , ("ifte mzero", property $ do
+        th <- arbitrary
+        el <- arbitrary @(m b)
+        pure $ property $
+          ifte @m @a @b mzero th el =-= el
+      )
+    , ("ifte mplus", property $ do
+        a <- arbitrary
+        m <- arbitrary
+        th <- arbitrary
+        el <- arbitrary @(m b)
+        pure $ property $
+          ifte @m @a @b (return a `mplus` m) th el =-= th a `mplus` (m >>= th)
+      )
+    ]
+  )
 
