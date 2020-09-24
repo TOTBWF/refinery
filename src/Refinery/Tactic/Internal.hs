@@ -41,17 +41,13 @@ import Control.Monad.Except
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.State.Strict
-import Control.Monad.Trans
+import Control.Monad.Trans (MonadTrans(..))
 import Control.Monad.Logic
-import Control.Monad.IO.Class
+import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Morph
 
 import Data.Bifunctor
 import Data.Coerce
-
-import Pipes.Core
-import Pipes.Internal
-import Pipes.Lift (evalStateP, runStateP)
 
 import Refinery.ProofState
 
@@ -96,6 +92,9 @@ mapTacticT f (TacticT m) = TacticT $ m >>= (lift . lift . f . return)
 
 instance MonadTrans (TacticT jdg ext err) where
   lift m = TacticT $ lift $ lift m
+
+instance (MonadProvable jdg m) => MonadLogic (TacticT jdg ext err m) where
+    msplit = TacticT . fmap (fmap (second TacticT)) . msplit . unTacticT
 
 instance (MonadProvable jdg m, MonadState s m) => MonadState s (TacticT jdg ext err m) where
   get = lift get
