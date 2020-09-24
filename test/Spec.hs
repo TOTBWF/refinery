@@ -149,29 +149,25 @@ monadLogic _ =
     , ("msplit mplus", property $ do
         a <- arbitrary
         m <- arbitrary
-        pure $ property $
-          msplit @m @a (return a `mplus` m) =-= return (Just (a, m))
+        pure $ msplit @m @a (return a `mplus` m) =-= return (Just (a, m))
       )
     , ("ifte return", property $ do
         a <- arbitrary
         th <- arbitrary
         el <- arbitrary
-        pure $ property $
-          ifte @m @a @b (return a) th el =-= th a
+        pure $ ifte @m @a @b (return a) th el =-= th a
       )
     , ("ifte mzero", property $ do
         th <- arbitrary
         el <- arbitrary @(m b)
-        pure $ property $
-          ifte @m @a @b mzero th el =-= el
+        pure $ ifte @m @a @b mzero th el =-= el
       )
     , ("ifte mplus", property $ do
         a <- arbitrary
         m <- arbitrary
         th <- arbitrary
         el <- arbitrary @(m b)
-        pure $ property $
-          ifte @m @a @b (return a `mplus` m) th el =-= th a `mplus` (m >>= th)
+        pure $ ifte @m @a @b (return a `mplus` m) th el =-= th a `mplus` (m >>= th)
       )
     ]
   )
