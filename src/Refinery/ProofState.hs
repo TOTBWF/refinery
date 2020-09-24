@@ -57,7 +57,7 @@ instance Monad m => Applicative (ProofStateT ext ext err m) where
     pure = return
     (<*>) = ap
 
-instance MFunctor (ProofStateT ext ext err) where
+instance MFunctor (ProofStateT ext' ext err) where
   hoist nat  (Subgoal a k) = Subgoal a $ fmap (hoist nat) k
   hoist nat  (Effect m)    = Effect $ nat $ fmap (hoist nat) m
   hoist nat  (Alt p1 p2)   = Alt (hoist nat p1) (hoist nat p2)
@@ -173,14 +173,23 @@ instance (MonadState s m) => MonadState s (ProofStateT ext ext err m) where
   get = lift get
   put = lift . put
 
-axiom :: (Monad m) => ext -> ProofStateT ext' ext err m jdg
+axiom :: ext -> ProofStateT ext' ext err m jdg
 axiom = Axiom
 
-mapExtract :: (Monad m) => (ext -> ext') -> (ext' -> ext) -> ProofStateT ext ext err m jdg -> ProofStateT ext' ext' err m jdg
+mapExtract :: (Functor m) => (ext -> ext') -> (ext' -> ext) -> ProofStateT ext ext err m jdg -> ProofStateT ext' ext' err m jdg
 mapExtract into out = \case
     Subgoal goal k -> Subgoal goal $ mapExtract into out . k . out
     Effect m -> Effect (fmap (mapExtract into out) m)
     Alt t1 t2 -> Alt (mapExtract into out t1) (mapExtract into out t2)
+    Empty -> Empty
+    Failure err -> Failure err
+    Axiom ext -> Axiom $ into ext
+
+mapExtract' :: Functor m => (a -> b) -> ProofStateT ext' a err m jdg -> ProofStateT ext' b err m jdg
+mapExtract' into = \case
+    Subgoal goal k -> Subgoal goal $ mapExtract' into . k
+    Effect m -> Effect (fmap (mapExtract' into) m)
+    Alt t1 t2 -> Alt (mapExtract' into t1) (mapExtract' into t2)
     Empty -> Empty
     Failure err -> Failure err
     Axiom ext -> Axiom $ into ext
