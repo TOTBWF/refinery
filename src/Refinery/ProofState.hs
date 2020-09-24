@@ -15,7 +15,7 @@
 --
 --
 module Refinery.ProofState
-  -- ( ProofStateT(..)
+  -- ( ProofStateT ext'(..)
   -- , axiom
   -- , mapExtract
   -- )
@@ -34,15 +34,16 @@ import Control.Monad.IO.Class
 -- import Pipes.Core
 -- import Pipes.Internal
 
-data ProofStateT ext err m goal
-    = Subgoal goal (ext -> ProofStateT ext err m goal)
-    | Effect (m (ProofStateT ext err m goal))
-    | Alt (ProofStateT ext err m goal) (ProofStateT ext err m goal)
+-- newtype ProofStateT ext' ext m jdg = ProofStateT ext' { unProofStateT ext' :: Client jdg ext m ext }
+data ProofStateT ext' ext err m goal
+    = Subgoal goal (ext' -> ProofStateT ext' ext err m goal)
+    | Effect (m (ProofStateT ext' ext err m goal))
+    | Alt (ProofStateT ext' ext err m goal) (ProofStateT ext' ext err m goal)
     | Empty
     | Failure err
     | Axiom ext
 
-instance Functor m => Functor (ProofStateT ext err m) where
+instance Functor m => Functor (ProofStateT ext' ext err m) where
     fmap f (Subgoal goal k) = Subgoal (f goal) (fmap f . k)
     fmap f (Effect m) = Effect (fmap (fmap f) m)
     fmap f (Alt p1 p2) = Alt (fmap f p1) (fmap f p2)
@@ -51,11 +52,15 @@ instance Functor m => Functor (ProofStateT ext err m) where
     fmap f (Axiom ext) = Axiom ext
 
 -- TODO Do this right pls
-instance Monad m => Applicative (ProofStateT ext err m) where
+instance Monad m => Applicative (ProofStateT ext ext err m) where
     pure = return
     (<*>) = ap
 
-applyCont :: (Functor m) => (ext -> ProofStateT ext err m a) -> ProofStateT ext err m a -> ProofStateT ext err m a
+applyCont
+    :: (Functor m)
+    => (ext -> ProofStateT ext ext err m a)
+    -> ProofStateT ext ext err m a
+    -> ProofStateT ext ext err m a
 applyCont k (Subgoal goal k') = Subgoal goal (applyCont k . k')
 applyCont k (Effect m) = Effect (fmap (applyCont k) m)
 applyCont k (Alt p1 p2) = Alt (applyCont k p1) (applyCont k p2)
@@ -63,7 +68,7 @@ applyCont k Empty = Empty
 applyCont k (Failure err) = (Failure err)
 applyCont k (Axiom ext) = k ext
 
-instance Monad m => Monad (ProofStateT ext err m) where
+instance Monad m => Monad (ProofStateT ext ext err m) where
     return goal = Subgoal goal Axiom
     (Subgoal a k) >>= f = applyCont ((>>= f) . k) (f a)
     (Effect m)    >>= f = Effect (fmap (>>= f) m)
@@ -72,18 +77,18 @@ instance Monad m => Monad (ProofStateT ext err m) where
     Empty         >>= _ = Empty
     (Axiom ext)   >>= _ = Axiom ext
 
-instance MonadTrans (ProofStateT ext err) where
+instance MonadTrans (ProofStateT ext ext err) where
     lift m = Effect (fmap pure m)
 
-instance (Monad m) => Alternative (ProofStateT ext err m) where
+instance (Monad m) => Alternative (ProofStateT ext ext err m) where
     empty = Empty
     (<|>) = Alt
 
-instance (Monad m) => MonadPlus (ProofStateT ext err m) where
+instance (Monad m) => MonadPlus (ProofStateT ext ext err m) where
     mzero = empty
     mplus = (<|>)
 
-instance (Monad m) => MonadLogic (ProofStateT ext err m) where
+instance (Monad m) => MonadLogic (ProofStateT ext ext err m) where
     msplit (Subgoal goal k) = Subgoal (Just (goal, Empty)) (msplit . k)
     msplit (Effect m)       = Effect (fmap msplit m)
     msplit (Alt p1 p2)      = msplit p1 >>= \case
@@ -100,7 +105,10 @@ class (Monad m) => MonadExtract ext m | m -> ext where
   default hole :: (MonadTrans t, MonadExtract ext m1, m ~ t m1) => m ext
   hole = lift hole
 
-collect :: (Semigroup err, MonadExtract ext m) => ProofStateT ext err m goal -> m (Either err [(ext, [goal])])
+collect
+    :: (Semigroup err, MonadExtract ext m)
+    => ProofStateT ext ext err m goal
+    -> m (Either err [(ext, [goal])])
 collect (Subgoal goal k) = do
     h <- hole
     pure $ Right $ [(h, [goal])]
@@ -119,13 +127,13 @@ accumEither (Right b1) (Right b2) = Right (b1 <> b2)
 accumEither Left{} x              = x
 accumEither x Left{}              = x
 
-instance (MonadIO m) => MonadIO (ProofStateT ext err m) where
+instance (MonadIO m) => MonadIO (ProofStateT ext ext err m) where
   liftIO = lift . liftIO
 
-instance (MonadThrow m) => MonadThrow (ProofStateT ext err m) where
+instance (MonadThrow m) => MonadThrow (ProofStateT ext ext err m) where
   throwM = lift . throwM
 
-instance (MonadCatch m) => MonadCatch (ProofStateT err ext m) where
+instance (MonadCatch m) => MonadCatch (ProofStateT ext ext err m) where
     catch (Subgoal goal k) handle = Subgoal goal (flip catch handle . k)
     catch (Effect m) handle = Effect . catch m $ pure . handle
     catch (Alt p1 p2) handle = catch p1 handle <|> catch p2 handle
@@ -134,7 +142,7 @@ instance (MonadCatch m) => MonadCatch (ProofStateT err ext m) where
     catch (Axiom e) handle = (Axiom e)
 
 
-instance (Monad m) => MonadError err (ProofStateT ext err m) where
+instance (Monad m) => MonadError err (ProofStateT ext ext err m) where
     throwError = Failure
     catchError (Subgoal goal k) handle = Subgoal goal (flip catchError handle . k)
     catchError (Effect m) handle = Effect (fmap (flip catchError handle) m)
@@ -143,7 +151,7 @@ instance (Monad m) => MonadError err (ProofStateT ext err m) where
     catchError (Failure err) handle = handle err
     catchError (Axiom e) handle = (Axiom e)
 
-instance (MonadReader r m) => MonadReader r (ProofStateT ext err m) where
+instance (MonadReader r m) => MonadReader r (ProofStateT ext ext err m) where
     ask = lift ask
     local f (Subgoal goal k) = Subgoal goal (local f . k)
     local f (Effect m) = Effect (local f m)
@@ -152,14 +160,14 @@ instance (MonadReader r m) => MonadReader r (ProofStateT ext err m) where
     local f (Failure err) = (Failure err)
     local f (Axiom e) = (Axiom e)
 
-instance (MonadState s m) => MonadState s (ProofStateT ext err m) where
+instance (MonadState s m) => MonadState s (ProofStateT ext ext err m) where
   get = lift get
   put = lift . put
 
-axiom :: (Monad m) => ext -> ProofStateT ext err m jdg
+axiom :: (Monad m) => ext -> ProofStateT ext' ext err m jdg
 axiom = Axiom
 
-mapExtract :: (Monad m) => (ext -> ext') -> (ext' -> ext) -> ProofStateT ext err m jdg -> ProofStateT ext' err m jdg
+mapExtract :: (Monad m) => (ext -> ext') -> (ext' -> ext) -> ProofStateT ext ext err m jdg -> ProofStateT ext' ext' err m jdg
 mapExtract into out = \case
     Subgoal goal k -> Subgoal goal $ mapExtract into out . k . out
     Effect m -> Effect (fmap (mapExtract into out) m)
