@@ -114,6 +114,7 @@ instance Monad m => Applicative (RuleT jdg ext err m) where
   (<*>) = ap
 
 instance Monad m => Monad (RuleT jdg ext err m) where
+  return = coerce . Axiom
   RuleT (Subgoal goal k) >>= f = coerce $ Subgoal goal $ fmap (bindAlaCoerce f) k
   RuleT (Effect m)       >>= f = coerce $ Effect $ fmap (bindAlaCoerce f) m
   RuleT (Alt p1 p2)      >>= f = coerce $ Alt (bindAlaCoerce f p1) (bindAlaCoerce f p2)
@@ -134,6 +135,10 @@ instance MFunctor (RuleT jdg ext err) where
 
 instance MonadIO m => MonadIO (RuleT jdg ext err m) where
   liftIO = lift . liftIO
+
+instance Monad m => MonadError err (RuleT jdg ext err m) where
+  throwError = coerce . Failure
+  catchError r h = coerce $ flip catchError h $ coerce r
 
 -- -- | Map the unwrapped computation using the given function
 -- mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext err m a -> RuleT jdg ext err m b
