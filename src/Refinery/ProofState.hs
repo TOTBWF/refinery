@@ -30,6 +30,7 @@ import Control.Monad.Except
 import Control.Monad.Reader.Class
 import Control.Monad.State.Class
 import Control.Monad.IO.Class
+import Control.Monad.Morph
 
 -- import Pipes.Core
 -- import Pipes.Internal
@@ -55,6 +56,14 @@ instance Functor m => Functor (ProofStateT ext' ext err m) where
 instance Monad m => Applicative (ProofStateT ext ext err m) where
     pure = return
     (<*>) = ap
+
+instance MFunctor (ProofStateT ext ext err) where
+  hoist nat  (Subgoal a k) = Subgoal a $ fmap (hoist nat) k
+  hoist nat  (Effect m)    = Effect $ nat $ fmap (hoist nat) m
+  hoist nat  (Alt p1 p2)   = Alt (hoist nat p1) (hoist nat p2)
+  hoist nat  (Failure err) = Failure err
+  hoist nat  Empty         = Empty
+  hoist nat  (Axiom ext)   = Axiom ext
 
 applyCont
     :: (Functor m)
