@@ -137,6 +137,9 @@ monadLogic
        , MonadLogic m
        , EqProp (m b)
        , EqProp (m (Maybe (a, m a)))
+       , Show a
+       , Show (m a)
+       , Show (m b)
        )
     => m (a, b)
     -> TestBatch
@@ -146,25 +149,41 @@ monadLogic _ =
     , ("msplit mplus", property $ do
         a <- arbitrary
         m <- arbitrary
-        pure $ msplit @m @a (return a `mplus` m) =-= return (Just (a, m))
+        pure $
+          counterexample (show a) $
+          counterexample (show m) $
+            msplit @m @a (return a `mplus` m) =-= return (Just (a, m))
       )
     , ("ifte return", property $ do
         a <- arbitrary
         th <- arbitrary
         el <- arbitrary
-        pure $ ifte @m @a @b (return a) th el =-= th a
+        pure $
+          counterexample (show a) $
+          counterexample "<function>" $
+          counterexample (show el) $
+            ifte @m @a @b (return a) th el =-= th a
       )
     , ("ifte mzero", property $ do
         th <- arbitrary
         el <- arbitrary @(m b)
-        pure $ ifte @m @a @b mzero th el =-= el
+        pure $
+          counterexample "<function>" $
+          counterexample (show el) $
+            ifte @m @a @b mzero th el =-= el
       )
     , ("ifte mplus", property $ do
         a <- arbitrary
         m <- arbitrary
         th <- arbitrary
         el <- arbitrary @(m b)
-        pure $ ifte @m @a @b (return a `mplus` m) th el =-= th a `mplus` (m >>= th)
+        pure $
+          counterexample (show a) $
+          counterexample (show m) $
+          counterexample "<function>" $
+          counterexample (show el) $
+            ifte @m @a @b (return a `mplus` m) th el
+              =-= th a `mplus` (m >>= th)
       )
     ]
   )
