@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fdefer-typed-holes #-}
 {-# LANGUAGE DefaultSignatures      #-}
 {-# LANGUAGE DeriveGeneric          #-}
 {-# LANGUAGE DerivingStrategies     #-}
@@ -28,11 +29,11 @@ import           Control.Applicative
 import           Control.Monad
 import           Control.Monad.Catch hiding (handle)
 import           Control.Monad.Except
+import           Control.Monad.State
 import           Control.Monad.Logic
 import           Control.Monad.Morph
 import           Control.Monad.Reader.Class
-import           Control.Monad.State.Class
-import qualified Data.DList as DL
+
 import           GHC.Generics
 
 -- import Pipes.Core
@@ -126,31 +127,27 @@ class (Monad m) => MonadExtract ext m | m -> ext where
   default hole :: (MonadTrans t, MonadExtract ext m1, m ~ t m1) => m ext
   hole = lift hole
 
-proofs
-    :: (Monoid err, MonadExtract ext m)
-    => ProofStateT ext ext err m goal
-    -> m (Either err [(ext, [goal])])
-proofs = fmap (fmap DL.toList) . proofs'
+-- TODO [Reed] Add the rest of the instances
+instance (MonadExtract ext m) => MonadExtract ext (StateT s m)
+instance (MonadExtract ext m) => MonadExtract ext (ExceptT err m)
 
--- | Gather together all of the proofs' synthesized by the provided 'ProofStateT'
+proofs :: (Monoid err, MonadExtract ext m) => ProofStateT ext ext err m goal -> m (Either err (ext, [goal]))
+proofs p = runExceptT $ runStateT (proofs' p) []
+
+-- TODO [Reed] Use a dlist
 proofs'
     :: (Monoid err, MonadExtract ext m)
     => ProofStateT ext ext err m goal
-    -> m (Either err (DL.DList (ext, [goal])))
-proofs' (Subgoal goal _k) = do
+    -> StateT [goal] (ExceptT err m) ext
+proofs' (Subgoal goal k) = do
     h <- hole
-    pure $ Right $ DL.singleton (h, [goal])
-    -- TODO(sandy): ?????
-    -- z <- proofs' (k h)
-    -- pure $ accumEither (Right [(h, [goal])]) z
-proofs' (Effect m)       = proofs' =<< m
-proofs' (Alt p1 p2)      = do
-    e1 <- proofs' p1
-    e2 <- proofs' p2
-    pure $ accumEither e1 e2
-proofs' Empty            = pure $ Left mempty
-proofs' (Failure err)    = pure $ Left err
-proofs' (Axiom ext)      = pure $ Right $ DL.singleton (ext, [])
+    modify (++ [goal])
+    proofs' $ k h
+proofs' (Effect m)       = proofs' =<< (lift $ lift m)
+proofs' (Alt p1 p2)      = (proofs' p1) `catchError` (\_ -> proofs' p2)
+proofs' Empty            = throwError mempty
+proofs' (Failure err)    = throwError err
+proofs' (Axiom ext)      = pure ext
 
 accumEither :: (Semigroup a, Semigroup b) => Either a b -> Either a b -> Either a b
 accumEither (Left a1) (Left a2)   = Left (a1 <> a2)

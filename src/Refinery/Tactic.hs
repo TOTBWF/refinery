@@ -60,7 +60,7 @@ import Refinery.Tactic.Internal
 -- -- the identity tactic is applied to the remainder. When the number of subgoals is
 -- -- less than the number of provided tactics, the remaining tactics are ignored.
 (<@>) :: (MonadProvable jdg m) => TacticT jdg ext err m a -> [TacticT jdg ext err m a] -> TacticT jdg ext err m a
-t <@> ts = tactic $ \j -> subgoals (fmap (\t' (_,j') -> proofState t j') ts) (proofState t j)
+t <@> ts = tactic $ \j -> subgoals (fmap (\t' (_,j') -> proofState t' j') ts) (proofState t j)
 
 -- | Tries to run a tactic, backtracking on failure
 try :: (MonadProvable jdg m, MonadPlus m) => TacticT jdg ext err m () -> TacticT jdg ext err m ()
@@ -95,7 +95,7 @@ focus :: (MonadProvable jdg m) => TacticT jdg ext err m () -> Int -> TacticT jdg
 focus t n t' = t <@> (replicate n (pure ()) ++ [t'] ++ repeat (pure ()))
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
-runTacticT :: (Monoid err, MonadExtract ext m) => TacticT jdg ext err m () -> jdg -> m (Either err [(ext, [jdg])])
+runTacticT :: (Monoid err, MonadExtract ext m) => TacticT jdg ext err m () -> jdg -> m (Either err (ext, [jdg]))
 runTacticT t j = proofs $ fmap snd $ proofState t j
 
 -- | Turn an inference rule into a tactic.
