@@ -140,6 +140,7 @@ monadLogic
        , Show a
        , Show (m a)
        , Show (m b)
+       , Function a
        )
     => m (a, b)
     -> TestBatch
@@ -156,31 +157,34 @@ monadLogic _ =
       )
     , ("ifte return", property $ do
         a <- arbitrary
-        th <- arbitrary
+        thf <- arbitrary
+        let th = applyFun thf
         el <- arbitrary
         pure $
           counterexample (show a) $
-          counterexample "<function>" $
+          counterexample (show thf) $
           counterexample (show el) $
             ifte @m @a @b (return a) th el =-= th a
       )
     , ("ifte mzero", property $ do
-        th <- arbitrary
+        thf <- arbitrary
+        let th = applyFun thf
         el <- arbitrary @(m b)
         pure $
-          counterexample "<function>" $
+          counterexample (show thf) $
           counterexample (show el) $
             ifte @m @a @b mzero th el =-= el
       )
     , ("ifte mplus", property $ do
         a <- arbitrary
         m <- arbitrary
-        th <- arbitrary
+        thf <- arbitrary
+        let th = applyFun thf
         el <- arbitrary @(m b)
         pure $
           counterexample (show a) $
           counterexample (show m) $
-          counterexample "<function>" $
+          counterexample (show thf) $
           counterexample (show el) $
             ifte @m @a @b (return a `mplus` m) th el
               =-= th a `mplus` (m >>= th)
