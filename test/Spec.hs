@@ -90,5 +90,7 @@ main = hspec $ do
   describe "TacticT" $ do
     testBatch $ functor     $ (undefined :: TacticT (Sum Int) Int String Identity ((), (), ()))
     testBatch $ applicative $ (undefined :: TacticT (Sum Int) Int String Identity ((), (), ()))
+    testBatch $ alternative $ (undefined :: TacticT (Sum Int) Int String Identity ())
     testBatch $ monad       $ (undefined :: TacticT (Sum Int) Int String Identity ((), (), ()))
+    testBatch $ monadPlus   $ (undefined :: TacticT (Sum Int) Int String Identity ((), ()))
 
