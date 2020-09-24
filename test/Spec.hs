@@ -40,8 +40,8 @@ instance ( Show jdg
          , Arbitrary jdg
          , EqProp (m (Either err (ext, [jdg])))
          )
-      => EqProp (TacticT jdg ext err m ()) where
-  (=-=) = (=-=) `on` runTacticT
+      => EqProp (TacticT jdg ext err m a) where
+  (=-=) = (=-=) `on` runTacticT . (() <$)
 
 instance ( Show jdg
          , Arbitrary jdg
@@ -127,11 +127,20 @@ main = hspec $ do
     testBatch $ alternative (undefined :: TacticTest ())
     testBatch $ monad       (undefined :: TacticTest ((), (), ()))
     testBatch $ monadPlus   (undefined :: TacticTest ((), ()))
+    testBatch $ monadLogic  (undefined :: TacticTest ((), ()))
 
 
 monadLogic
     :: forall m a b
-     . (CoArbitrary a, Arbitrary (m b), Arbitrary a, Arbitrary (m a), MonadPlus m, MonadLogic m, EqProp (m b), EqProp (m (Maybe (a, m a))))
+     . ( CoArbitrary a
+       , Arbitrary (m b)
+       , Arbitrary a
+       , Arbitrary (m a)
+       , MonadPlus m
+       , MonadLogic m
+       , EqProp (m b)
+       , EqProp (m (Maybe (a, m a)))
+       )
     => m (a, b)
     -> TestBatch
 monadLogic _ =
