@@ -1,15 +1,18 @@
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DerivingStrategies    #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE UndecidableInstances  #-}
-{-# OPTIONS_GHC -fno-warn-orphans  #-}
-{-# OPTIONS_GHC -Wredundant-constraints  #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE UndecidableInstances       #-}
+{-# OPTIONS_GHC -Wredundant-constraints #-}
+{-# OPTIONS_GHC -fno-warn-orphans       #-}
 
 module Main where
 
+import Control.Monad
+import Control.Monad.Logic.Class
 import Control.Monad.State.Strict (StateT (..))
 import Data.Function
 import Data.Functor.Identity
@@ -31,11 +34,19 @@ instance (MonadExtract ext m, EqProp (m [Either err (ext, [a])]))
       => EqProp (ProofStateT ext ext err m a) where
   (=-=) = (=-=) `on` proofs
 
-instance (Show jdg, MonadExtract ext m, Arbitrary jdg, EqProp (m [Either err (ext, [jdg])]))
-      => EqProp (TacticT jdg ext err m ()) where
-  (=-=) = (=-=) `on` runTacticT
+instance ( Show jdg
+         , MonadExtract ext m
+         , Arbitrary jdg
+         , EqProp (m [Either err (ext, [jdg])])
+         )
+      => EqProp (TacticT jdg ext err m a) where
+  (=-=) = (=-=) `on` runTacticT . (() <$)
 
-instance (Show jdg, Arbitrary jdg, EqProp (m [Either err (ext, [jdg])]), MonadExtract ext m)
+instance ( Show jdg
+         , Arbitrary jdg
+         , EqProp (m [Either err (ext , [jdg])])
+         , MonadExtract ext m
+         )
       => EqProp (RuleT jdg ext err m ext) where
   (=-=) = (=-=) `on` rule . const
 
@@ -45,7 +56,12 @@ instance MonadExtract Int Identity where
 instance MonadProvable (Sum Int) Identity where
   proving = pure
 
-instance (CoArbitrary ext', Arbitrary ext, Arbitrary err, Arbitrary a, Arbitrary (m (ProofStateT ext' ext err m a)))
+instance ( CoArbitrary ext'
+         , Arbitrary ext
+         , Arbitrary err
+         , Arbitrary a
+         , Arbitrary (m (ProofStateT ext' ext err m a))
+         )
       => Arbitrary (ProofStateT ext' ext err m a) where
   arbitrary = oneof
     [ Subgoal <$> decayArbitrary 2 <*> decayArbitrary 2
@@ -60,12 +76,24 @@ instance (CoArbitrary ext', Arbitrary ext, Arbitrary err, Arbitrary a, Arbitrary
 instance (Arbitrary (m (a, s)), CoArbitrary s) => Arbitrary (StateT s m a) where
   arbitrary = StateT <$> arbitrary
 
-instance (CoArbitrary jdg, Arbitrary a, Arbitrary ext, Arbitrary err, CoArbitrary ext, Arbitrary jdg, Arbitrary (m (ProofStateT ext ext err m (a, jdg))))
+instance ( CoArbitrary jdg
+         , Arbitrary a
+         , Arbitrary ext
+         , Arbitrary err
+         , CoArbitrary ext
+         , Arbitrary jdg
+         , Arbitrary (m (ProofStateT ext ext err m (a , jdg)))
+         )
       => Arbitrary (TacticT jdg ext err m a) where
   arbitrary = fmap (TacticT . StateT) arbitrary
   shrink = genericShrink
 
-instance (Arbitrary a, Arbitrary err, CoArbitrary ext, Arbitrary jdg, Arbitrary (m (ProofStateT ext a err m jdg)))
+instance ( Arbitrary a
+         , Arbitrary err
+         , CoArbitrary ext
+         , Arbitrary jdg
+         , Arbitrary (m (ProofStateT ext a err m jdg))
+         )
       => Arbitrary (RuleT jdg ext err m a) where
   arbitrary = fmap RuleT arbitrary
   shrink = genericShrink
@@ -73,22 +101,75 @@ instance (Arbitrary a, Arbitrary err, CoArbitrary ext, Arbitrary jdg, Arbitrary 
 decayArbitrary :: Arbitrary a => Int -> Gen a
 decayArbitrary n = scale (`div` n) arbitrary
 
+type ProofStateTest = ProofStateT Int Int String Identity
+type RuleTest = RuleT Int Int String Identity
+type TacticTest = TacticT (Sum Int) Int String Identity
+
 main :: IO ()
 main = hspec $ do
   describe "ProofStateT" $ do
-    testBatch $ functor     $ (undefined :: ProofStateT Int Int String Identity (Int, Int, Int))
-    testBatch $ applicative $ (undefined :: ProofStateT Int Int String Identity (Int, Int, Int))
-    testBatch $ alternative $ (undefined :: ProofStateT Int Int String Identity Int)
-    testBatch $ monad       $ (undefined :: ProofStateT Int Int String Identity (Int, Int, Int))
-    testBatch $ monadPlus   $ (undefined :: ProofStateT Int Int String Identity (Int, Int))
+    testBatch $ functor     (undefined :: ProofStateTest (Int, Int, Int))
+    testBatch $ applicative (undefined :: ProofStateTest (Int, Int, Int))
+    testBatch $ alternative (undefined :: ProofStateTest Int)
+    testBatch $ monad       (undefined :: ProofStateTest (Int, Int, Int))
+    testBatch $ monadPlus   (undefined :: ProofStateTest (Int, Int))
+    testBatch $ monadLogic  (undefined :: ProofStateTest (Int, Int))
   describe "RuleT" $ do
-    testBatch $ functor     $ (undefined :: RuleT Int Int String Identity (Int, Int, Int))
-    testBatch $ applicative $ (undefined :: RuleT Int Int String Identity (Int, Int, Int))
-    testBatch $ monad       $ (undefined :: RuleT Int Int String Identity (Int, Int, Int))
+    testBatch $ functor     (undefined :: RuleTest (Int, Int, Int))
+    testBatch $ applicative (undefined :: RuleTest (Int, Int, Int))
+    testBatch $ monad       (undefined :: RuleTest (Int, Int, Int))
   describe "TacticT" $ do
-    testBatch $ functor     $ (undefined :: TacticT (Sum Int) Int String Identity ((), (), ()))
-    testBatch $ applicative $ (undefined :: TacticT (Sum Int) Int String Identity ((), (), ()))
-    testBatch $ alternative $ (undefined :: TacticT (Sum Int) Int String Identity ())
-    testBatch $ monad       $ (undefined :: TacticT (Sum Int) Int String Identity ((), (), ()))
-    testBatch $ monadPlus   $ (undefined :: TacticT (Sum Int) Int String Identity ((), ()))
+    testBatch $ functor     (undefined :: TacticTest ((), (), ()))
+    testBatch $ applicative (undefined :: TacticTest ((), (), ()))
+    testBatch $ alternative (undefined :: TacticTest ())
+    testBatch $ monad       (undefined :: TacticTest ((), (), ()))
+    testBatch $ monadPlus   (undefined :: TacticTest ((), ()))
+    testBatch $ monadLogic  (undefined :: TacticTest ((), ()))
+
+
+monadLogic
+    :: forall m a b
+     . ( CoArbitrary a
+       , Arbitrary (m b)
+       , Arbitrary a
+       , Arbitrary (m a)
+       , MonadPlus m
+       , MonadLogic m
+       , EqProp (m b)
+       , EqProp (m (Maybe (a, m a)))
+       )
+    => m (a, b)
+    -> TestBatch
+monadLogic _ =
+  ( "MonadLogic laws"
+  , [ ("msplit mzero", msplit @m @a mzero =-= return Nothing)
+    , ("msplit mplus", property $ do
+        a <- arbitrary
+        m <- arbitrary
+        pure $ property $
+          msplit @m @a (return a `mplus` m) =-= return (Just (a, m))
+      )
+    , ("ifte return", property $ do
+        a <- arbitrary
+        th <- arbitrary
+        el <- arbitrary
+        pure $ property $
+          ifte @m @a @b (return a) th el =-= th a
+      )
+    , ("ifte mzero", property $ do
+        th <- arbitrary
+        el <- arbitrary @(m b)
+        pure $ property $
+          ifte @m @a @b mzero th el =-= el
+      )
+    , ("ifte mplus", property $ do
+        a <- arbitrary
+        m <- arbitrary
+        th <- arbitrary
+        el <- arbitrary @(m b)
+        pure $ property $
+          ifte @m @a @b (return a `mplus` m) th el =-= th a `mplus` (m >>= th)
+      )
+    ]
+  )
 
