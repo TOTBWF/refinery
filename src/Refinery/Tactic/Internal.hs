@@ -73,7 +73,7 @@ newtype TacticT jdg ext err m a = TacticT { unTacticT :: StateT jdg (ProofStateT
            , Generic
            )
 
-instance (Monoid jdg, Show a, Show jdg, Show err, Show ext) => Show (TacticT jdg ext err m a) where
+instance (Monoid jdg, Show a, Show jdg, Show err, Show ext, Show (m (ProofStateT ext ext err m (a, jdg)))) => Show (TacticT jdg ext err m a) where
   show = show . flip runStateT mempty . unTacticT
 
 -- | Helper function for producing a tactic.
@@ -113,7 +113,7 @@ newtype RuleT jdg ext err m a = RuleT
   }
   deriving stock Generic
 
-instance (Show jdg, Show err, Show a) => Show (RuleT jdg ext err m a) where
+instance (Show jdg, Show err, Show a, Show (m (ProofStateT ext a err m jdg))) => Show (RuleT jdg ext err m a) where
   show = show . unRuleT
 
 instance Functor m => Functor (RuleT jdg ext err m) where

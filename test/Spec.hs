@@ -11,18 +11,16 @@
 module Main where
 
 import Control.Monad.State.Strict (StateT (..))
-import Data.Coerce
-import Control.Monad
 import Data.Function
 import Data.Functor.Identity
+import Data.Monoid (Sum (..))
 import Refinery.ProofState
+import Refinery.Tactic
 import Refinery.Tactic.Internal
 import Test.Hspec
 import Test.QuickCheck hiding (Failure)
 import Test.QuickCheck.Checkers
 import Test.QuickCheck.Classes
-import Refinery.Tactic
-import Data.Monoid (Sum (..))
 
 testBatch :: TestBatch -> Spec
 testBatch (batchName, tests) = describe ("laws for: " ++ batchName) $

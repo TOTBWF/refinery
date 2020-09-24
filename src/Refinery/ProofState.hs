@@ -49,9 +49,9 @@ data ProofStateT ext' ext err m goal
     | Axiom ext
     deriving stock (Generic)
 
-instance (Show goal, Show err, Show ext) => Show (ProofStateT ext' ext err m goal) where
+instance (Show goal, Show err, Show ext, Show (m (ProofStateT ext' ext err m goal))) => Show (ProofStateT ext' ext err m goal) where
   show (Subgoal goal _) = "(Subgoal " <> show goal <> " <k>)"
-  show (Effect _) = "(Effect <m>)"
+  show (Effect m) = "(Effect " <> show m <> ")"
   show (Alt p1 p2) = "(Alt " <> show p1 <> " " <> show p2 <> ")"
   show Empty = "Empty"
   show (Failure err) = "(Failure " <> show err <> ")"
