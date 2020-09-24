@@ -197,7 +197,7 @@ axiom = Axiom
 
 subgoals :: (Functor m) => [jdg -> ProofStateT ext ext err m jdg] -> ProofStateT ext ext err m jdg  -> ProofStateT ext ext err m jdg
 subgoals [] (Subgoal goal k) = applyCont k (pure goal)
-subgoals (f:_fs) (Subgoal goal k)  = applyCont k (f goal)
+subgoals (f:fs) (Subgoal goal k)  = applyCont (subgoals fs . k) (f goal)
 subgoals fs (Effect m) = Effect (fmap (subgoals fs) m)
 subgoals fs (Alt p1 p2) = Alt (subgoals fs p1) (subgoals fs p2)
 subgoals _ (Failure err) = Failure err
