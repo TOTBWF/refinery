@@ -28,9 +28,6 @@ dependencies:
 - mmorph >= 1
 - mtl >= 2
 - containers >= 0.5
-- hspec
-- checkers
-- QuickCheck
 - dlist
 
 ghc-options:
@@ -50,3 +47,6 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - refinery
+    - hspec
+    - checkers
+    - QuickCheck
