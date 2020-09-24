@@ -23,12 +23,11 @@
 -- change at any given time.
 module Refinery.Tactic.Internal
   ( TacticT(..)
+  , tactic
+  , proofState
   , mapTacticT
-  -- , stateful
-  -- , asRule
   , MonadRule(..)
   , RuleT(..)
-  -- , mapRuleT
   , MonadProvable(..)
   , ProvableT(..)
   , Provable
@@ -74,6 +73,13 @@ newtype TacticT jdg ext err m a = TacticT { unTacticT :: StateT jdg (ProofStateT
            , MonadCatch
            )
 
+-- | Helper function for producing a tactic.
+tactic :: (jdg -> ProofStateT ext ext err m (a, jdg)) -> TacticT jdg ext err m a
+tactic t = TacticT $ StateT t
+
+proofState :: TacticT jdg ext err m a -> jdg -> ProofStateT ext ext err m (a, jdg)
+proofState t j = runStateT (unTacticT t) j
+
 instance (MonadProvable jdg m) => Applicative (TacticT jdg ext err m) where
   pure a = TacticT $ StateT $ proving >=> \j -> pure (a, j)
   (<*>) = ap
@@ -94,23 +100,6 @@ instance MonadTrans (TacticT jdg ext err) where
 instance (MonadProvable jdg m, MonadState s m) => MonadState s (TacticT jdg ext err m) where
   get = lift get
   put = lift . put
-
--- | Helper function for making "stateful" tactics like "<@>"
-stateful
-    :: (Monad m)
-    => TacticT jdg ext err m a
-    -> (jdg -> RuleT jdg ext err (StateT s m) ext)
-    -> s
-    -> TacticT jdg ext err m a
-stateful (TacticT t) f s =
-  TacticT $ StateT $ \j -> _ $ runStateT t j
-  -- evalStateP s $ action >\\ (hoist lift $ unProofStateT $ runStateT t j)
-  -- where
-  --   action (a, j) = (\j' -> request (a, j')) >\\ (unRuleT $ f j)
-
--- | Transforms a tactic into a rule. Useful for doing things with @'stateful'@.
-asRule :: (Monad m) => jdg -> TacticT jdg ext err m a -> RuleT jdg ext err m ext
-asRule j t = RuleT $ execStateT (unTacticT t) j
 
 -- | A @'RuleT'@ is a monad transformer for creating inference rules.
 newtype RuleT jdg ext err m a = RuleT
@@ -145,20 +134,6 @@ instance MFunctor (RuleT jdg ext err) where
 
 instance MonadIO m => MonadIO (RuleT jdg ext err m) where
   liftIO = lift . liftIO
-
-
---   deriving ( Functor
---            , Applicative
---            , Monad
---            , MonadReader env
---            , MonadState s
---            , MonadError err
---            , MonadIO
---            , MonadThrow
---            , MonadCatch
---            , MonadTrans
---            , MFunctor
---            )
 
 -- -- | Map the unwrapped computation using the given function
 -- mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext err m a -> RuleT jdg ext err m b

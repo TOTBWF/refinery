@@ -53,7 +53,7 @@ instance Functor m => Functor (ProofStateT ext' ext err m) where
     fmap f (Axiom ext) = Axiom ext
 
 -- TODO Do this right pls
-instance Monad m => Applicative (ProofStateT ext ext err m) where
+instance Functor m => Applicative (ProofStateT ext ext err m) where
     pure = return
     (<*>) = ap
 
@@ -77,7 +77,7 @@ applyCont k Empty = Empty
 applyCont k (Failure err) = (Failure err)
 applyCont k (Axiom ext) = k ext
 
-instance Monad m => Monad (ProofStateT ext ext err m) where
+instance Functor m => Monad (ProofStateT ext ext err m) where
     return goal = Subgoal goal Axiom
     (Subgoal a k) >>= f = applyCont ((>>= f) . k) (f a)
     (Effect m)    >>= f = Effect (fmap (>>= f) m)
@@ -114,21 +114,22 @@ class (Monad m) => MonadExtract ext m | m -> ext where
   default hole :: (MonadTrans t, MonadExtract ext m1, m ~ t m1) => m ext
   hole = lift hole
 
-collect
+-- | Gather together all of the proofs synthesized by the provided 'ProofStateT'
+proofs
     :: (Semigroup err, MonadExtract ext m)
     => ProofStateT ext ext err m goal
     -> m (Either err [(ext, [goal])])
-collect (Subgoal goal k) = do
+proofs (Subgoal goal k) = do
     h <- hole
     pure $ Right $ [(h, [goal])]
-collect (Effect m)       = collect =<< m
-collect (Alt p1 p2)      = do
-    e1 <- collect p1
-    e2 <- collect p1
+proofs (Effect m)       = proofs =<< m
+proofs (Alt p1 p2)      = do
+    e1 <- proofs p1
+    e2 <- proofs p1
     pure $ accumEither e1 e2
-collect Empty            = pure $ Right []
-collect (Failure err)    = pure $ Left err
-collect (Axiom ext)      = pure $ Right [(ext, [])]
+proofs Empty            = pure $ Right []
+proofs (Failure err)    = pure $ Left err
+proofs (Axiom ext)      = pure $ Right [(ext, [])]
 
 accumEither :: (Semigroup a, Semigroup b) => Either a b -> Either a b -> Either a b
 accumEither (Left a1) (Left a2)   = Left (a1 <> a2)
@@ -175,6 +176,15 @@ instance (MonadState s m) => MonadState s (ProofStateT ext ext err m) where
 
 axiom :: ext -> ProofStateT ext' ext err m jdg
 axiom = Axiom
+
+subgoals :: (Functor m) => [jdg -> ProofStateT ext ext err m jdg] ->ProofStateT ext ext err m jdg  -> ProofStateT ext ext err m jdg
+subgoals [] (Subgoal goal k) = applyCont k (pure goal)
+subgoals (f:fs) (Subgoal goal k)  = applyCont k (f goal)
+subgoals fs (Effect m) = Effect (fmap (subgoals fs) m)
+subgoals fs (Alt p1 p2) = Alt (subgoals fs p1) (subgoals fs p2)
+subgoals _ (Failure err) = Failure err
+subgoals _ Empty = Empty
+subgoals _ (Axiom ext) = Axiom ext
 
 mapExtract :: (Functor m) => (ext -> ext') -> (ext' -> ext) -> ProofStateT ext ext err m jdg -> ProofStateT ext' ext' err m jdg
 mapExtract into out = \case
