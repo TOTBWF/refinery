@@ -28,6 +28,9 @@ dependencies:
 - mmorph >= 1
 - mtl >= 2
 - containers >= 0.5
+- hspec
+- checkers
+- QuickCheck
 
 library:
   source-dirs: src

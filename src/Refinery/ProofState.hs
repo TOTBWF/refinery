@@ -1,11 +1,14 @@
-{-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE DefaultSignatures      #-}
+{-# LANGUAGE DeriveGeneric          #-}
+{-# LANGUAGE DerivingStrategies     #-}
+{-# LANGUAGE FlexibleContexts       #-}
+{-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE LambdaCase             #-}
+{-# LANGUAGE MultiParamTypeClasses  #-}
+{-# LANGUAGE TypeFamilies           #-}
+{-# LANGUAGE UndecidableInstances   #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Refinery.ProofState
@@ -21,6 +24,7 @@ module Refinery.ProofState
   -- )
 where
 
+import GHC.Generics
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Logic
@@ -43,6 +47,15 @@ data ProofStateT ext' ext err m goal
     | Empty
     | Failure err
     | Axiom ext
+    deriving stock (Generic)
+
+instance (Show goal, Show err, Show ext) => Show (ProofStateT ext' ext err m goal) where
+  show (Subgoal goal k) = "(Subgoal " <> show goal <> " <k>)"
+  show (Effect m) = "(Effect <m>)"
+  show (Alt p1 p2) = "(Alt " <> show p1 <> " " <> show p2 <> ")"
+  show Empty = "Empty"
+  show (Failure err) = "(Failure " <> show err <> ")"
+  show (Axiom ext) = "(Axiom " <> show ext <> ")"
 
 instance Functor m => Functor (ProofStateT ext' ext err m) where
     fmap f (Subgoal goal k) = Subgoal (f goal) (fmap f . k)
