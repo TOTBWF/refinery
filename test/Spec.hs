@@ -27,15 +27,15 @@ testBatch (batchName, tests) = describe ("laws for: " ++ batchName) $
   foldr (>>) (return ()) (map (uncurry it) tests)
 
 
-instance (Monoid err, MonadExtract ext m, EqProp (m (Either err (ext, [a]))))
+instance (MonadExtract ext m, EqProp (m [Either err (ext, [a])]))
       => EqProp (ProofStateT ext ext err m a) where
   (=-=) = (=-=) `on` proofs
 
-instance (Show jdg, Monoid err, MonadExtract ext m, Arbitrary jdg, EqProp (m (Either err (ext, [jdg]))))
+instance (Show jdg, MonadExtract ext m, Arbitrary jdg, EqProp (m [Either err (ext, [jdg])]))
       => EqProp (TacticT jdg ext err m ()) where
   (=-=) = (=-=) `on` runTacticT
 
-instance (Show jdg, Arbitrary jdg, EqProp (m (Either err (ext, [jdg]))), Monoid err, MonadExtract ext m)
+instance (Show jdg, Arbitrary jdg, EqProp (m [Either err (ext, [jdg])]), MonadExtract ext m)
       => EqProp (RuleT jdg ext err m ext) where
   (=-=) = (=-=) `on` rule . const
 

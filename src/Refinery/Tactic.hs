@@ -86,7 +86,7 @@ focus :: (MonadProvable jdg m) => TacticT jdg ext err m () -> Int -> TacticT jdg
 focus t n t' = t <@> (replicate n (pure ()) ++ [t'] ++ repeat (pure ()))
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
-runTacticT :: (Monoid err, MonadExtract ext m) => TacticT jdg ext err m () -> jdg -> m (Either err (ext, [jdg]))
+runTacticT :: (MonadExtract ext m) => TacticT jdg ext err m () -> jdg -> m [Either err (ext, [jdg])]
 runTacticT t j = proofs $ fmap snd $ proofState t j
 
 -- | Turn an inference rule into a tactic.
