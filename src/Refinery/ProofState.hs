@@ -24,17 +24,16 @@ module Refinery.ProofState
   -- )
 where
 
-import GHC.Generics
-import Control.Applicative
-import Control.Monad
-import Control.Monad.Logic
-import Control.Monad.Trans
-import Control.Monad.Catch
-import Control.Monad.Except
-import Control.Monad.Reader.Class
-import Control.Monad.State.Class
-import Control.Monad.IO.Class
-import Control.Monad.Morph
+import           Control.Applicative
+import           Control.Monad
+import           Control.Monad.Catch hiding (handle)
+import           Control.Monad.Except
+import           Control.Monad.Logic
+import           Control.Monad.Morph
+import           Control.Monad.Reader.Class
+import           Control.Monad.State.Class
+import qualified Data.DList as DL
+import           GHC.Generics
 
 -- import Pipes.Core
 -- import Pipes.Internal
@@ -50,8 +49,8 @@ data ProofStateT ext' ext err m goal
     deriving stock (Generic)
 
 instance (Show goal, Show err, Show ext) => Show (ProofStateT ext' ext err m goal) where
-  show (Subgoal goal k) = "(Subgoal " <> show goal <> " <k>)"
-  show (Effect m) = "(Effect <m>)"
+  show (Subgoal goal _) = "(Subgoal " <> show goal <> " <k>)"
+  show (Effect _) = "(Effect <m>)"
   show (Alt p1 p2) = "(Alt " <> show p1 <> " " <> show p2 <> ")"
   show Empty = "Empty"
   show (Failure err) = "(Failure " <> show err <> ")"
@@ -61,9 +60,9 @@ instance Functor m => Functor (ProofStateT ext' ext err m) where
     fmap f (Subgoal goal k) = Subgoal (f goal) (fmap f . k)
     fmap f (Effect m) = Effect (fmap (fmap f) m)
     fmap f (Alt p1 p2) = Alt (fmap f p1) (fmap f p2)
-    fmap f Empty = Empty
-    fmap f (Failure err) = Failure err
-    fmap f (Axiom ext) = Axiom ext
+    fmap _ Empty = Empty
+    fmap _ (Failure err) = Failure err
+    fmap _ (Axiom ext) = Axiom ext
 
 -- TODO Do this right pls
 instance Functor m => Applicative (ProofStateT ext ext err m) where
@@ -71,12 +70,12 @@ instance Functor m => Applicative (ProofStateT ext ext err m) where
     (<*>) = ap
 
 instance MFunctor (ProofStateT ext' ext err) where
-  hoist nat  (Subgoal a k) = Subgoal a $ fmap (hoist nat) k
-  hoist nat  (Effect m)    = Effect $ nat $ fmap (hoist nat) m
-  hoist nat  (Alt p1 p2)   = Alt (hoist nat p1) (hoist nat p2)
-  hoist nat  (Failure err) = Failure err
-  hoist nat  Empty         = Empty
-  hoist nat  (Axiom ext)   = Axiom ext
+  hoist nat (Subgoal a k) = Subgoal a $ fmap (hoist nat) k
+  hoist nat (Effect m)    = Effect $ nat $ fmap (hoist nat) m
+  hoist nat (Alt p1 p2)   = Alt (hoist nat p1) (hoist nat p2)
+  hoist _ (Failure err) = Failure err
+  hoist _ Empty         = Empty
+  hoist _ (Axiom ext)   = Axiom ext
 
 applyCont
     :: (Functor m)
@@ -86,8 +85,8 @@ applyCont
 applyCont k (Subgoal goal k') = Subgoal goal (applyCont k . k')
 applyCont k (Effect m) = Effect (fmap (applyCont k) m)
 applyCont k (Alt p1 p2) = Alt (applyCont k p1) (applyCont k p2)
-applyCont k Empty = Empty
-applyCont k (Failure err) = (Failure err)
+applyCont _ Empty = Empty
+applyCont _ (Failure err) = (Failure err)
 applyCont k (Axiom ext) = k ext
 
 instance Functor m => Monad (ProofStateT ext ext err m) where
@@ -117,8 +116,8 @@ instance (Monad m) => MonadLogic (ProofStateT ext ext err m) where
         Just (a, rest) -> pure $ Just (a, rest <|> p2)
         Nothing        -> msplit p2
     msplit Empty            = pure Nothing
-    msplit (Failure err)    = pure Nothing
-    msplit (Axiom ext)      = pure Nothing
+    msplit (Failure _)    = pure Nothing
+    msplit (Axiom _)      = pure Nothing
 
 class (Monad m) => MonadExtract ext m | m -> ext where
   -- | Generates a "hole" of type @ext@, which should represent
@@ -127,22 +126,31 @@ class (Monad m) => MonadExtract ext m | m -> ext where
   default hole :: (MonadTrans t, MonadExtract ext m1, m ~ t m1) => m ext
   hole = lift hole
 
--- | Gather together all of the proofs synthesized by the provided 'ProofStateT'
 proofs
     :: (Monoid err, MonadExtract ext m)
     => ProofStateT ext ext err m goal
     -> m (Either err [(ext, [goal])])
-proofs (Subgoal goal k) = do
+proofs = fmap (fmap DL.toList) . proofs'
+
+-- | Gather together all of the proofs' synthesized by the provided 'ProofStateT'
+proofs'
+    :: (Monoid err, MonadExtract ext m)
+    => ProofStateT ext ext err m goal
+    -> m (Either err (DL.DList (ext, [goal])))
+proofs' (Subgoal goal _k) = do
     h <- hole
-    pure $ Right $ [(h, [goal])]
-proofs (Effect m)       = proofs =<< m
-proofs (Alt p1 p2)      = do
-    e1 <- proofs p1
-    e2 <- proofs p2
+    pure $ Right $ DL.singleton (h, [goal])
+    -- TODO(sandy): ?????
+    -- z <- proofs' (k h)
+    -- pure $ accumEither (Right [(h, [goal])]) z
+proofs' (Effect m)       = proofs' =<< m
+proofs' (Alt p1 p2)      = do
+    e1 <- proofs' p1
+    e2 <- proofs' p2
     pure $ accumEither e1 e2
-proofs Empty            = pure $ Left mempty
-proofs (Failure err)    = pure $ Left err
-proofs (Axiom ext)      = pure $ Right [(ext, [])]
+proofs' Empty            = pure $ Left mempty
+proofs' (Failure err)    = pure $ Left err
+proofs' (Axiom ext)      = pure $ Right $ DL.singleton (ext, [])
 
 accumEither :: (Semigroup a, Semigroup b) => Either a b -> Either a b -> Either a b
 accumEither (Left a1) (Left a2)   = Left (a1 <> a2)
@@ -161,8 +169,8 @@ instance (MonadCatch m) => MonadCatch (ProofStateT ext ext err m) where
     catch (Effect m) handle = Effect . catch m $ pure . handle
     catch (Alt p1 p2) handle = catch p1 handle <|> catch p2 handle
     catch Empty _ = Empty
-    catch (Failure err) handle = Failure err
-    catch (Axiom e) handle = (Axiom e)
+    catch (Failure err) _ = Failure err
+    catch (Axiom e) _ = (Axiom e)
 
 
 instance (Monad m) => MonadError err (ProofStateT ext ext err m) where
@@ -172,16 +180,16 @@ instance (Monad m) => MonadError err (ProofStateT ext ext err m) where
     catchError (Alt p1 p2) handle = catchError p1 handle <|> catchError p2 handle
     catchError Empty _ = Empty
     catchError (Failure err) handle = handle err
-    catchError (Axiom e) handle = (Axiom e)
+    catchError (Axiom e) _ = (Axiom e)
 
 instance (MonadReader r m) => MonadReader r (ProofStateT ext ext err m) where
     ask = lift ask
     local f (Subgoal goal k) = Subgoal goal (local f . k)
     local f (Effect m) = Effect (local f m)
     local f (Alt p1 p2) = Alt (local f p1) (local f p2)
-    local f Empty = Empty
-    local f (Failure err) = (Failure err)
-    local f (Axiom e) = (Axiom e)
+    local _ Empty = Empty
+    local _ (Failure err) = (Failure err)
+    local _ (Axiom e) = (Axiom e)
 
 instance (MonadState s m) => MonadState s (ProofStateT ext ext err m) where
   get = lift get
@@ -190,9 +198,9 @@ instance (MonadState s m) => MonadState s (ProofStateT ext ext err m) where
 axiom :: ext -> ProofStateT ext' ext err m jdg
 axiom = Axiom
 
-subgoals :: (Functor m) => [jdg -> ProofStateT ext ext err m jdg] ->ProofStateT ext ext err m jdg  -> ProofStateT ext ext err m jdg
+subgoals :: (Functor m) => [jdg -> ProofStateT ext ext err m jdg] -> ProofStateT ext ext err m jdg  -> ProofStateT ext ext err m jdg
 subgoals [] (Subgoal goal k) = applyCont k (pure goal)
-subgoals (f:fs) (Subgoal goal k)  = applyCont k (f goal)
+subgoals (f:_fs) (Subgoal goal k)  = applyCont k (f goal)
 subgoals fs (Effect m) = Effect (fmap (subgoals fs) m)
 subgoals fs (Alt p1 p2) = Alt (subgoals fs p1) (subgoals fs p2)
 subgoals _ (Failure err) = Failure err

@@ -31,6 +31,7 @@ dependencies:
 - hspec
 - checkers
 - QuickCheck
+- dlist
 
 ghc-options:
   - -Wall

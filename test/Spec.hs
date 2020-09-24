@@ -5,19 +5,18 @@
 {-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE UndecidableInstances  #-}
+{-# OPTIONS_GHC -fno-warn-orphans  #-}
 
 module Main where
 
 import Control.Monad
-import Control.Applicative
-import Data.List
 import Data.Function
 import Data.Functor.Identity
+import Refinery.ProofState
 import Test.Hspec
+import Test.QuickCheck hiding (Failure)
 import Test.QuickCheck.Checkers
 import Test.QuickCheck.Classes
-import Test.QuickCheck hiding (Failure)
-import Refinery.ProofState
 
 testBatch :: TestBatch -> Spec
 testBatch (batchName, tests) = describe ("laws for: " ++ batchName) $
