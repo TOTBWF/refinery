@@ -129,7 +129,7 @@ class (Monad m) => MonadExtract ext m | m -> ext where
 
 -- | Gather together all of the proofs synthesized by the provided 'ProofStateT'
 proofs
-    :: (Semigroup err, MonadExtract ext m)
+    :: (Monoid err, MonadExtract ext m)
     => ProofStateT ext ext err m goal
     -> m (Either err [(ext, [goal])])
 proofs (Subgoal goal k) = do
@@ -138,9 +138,9 @@ proofs (Subgoal goal k) = do
 proofs (Effect m)       = proofs =<< m
 proofs (Alt p1 p2)      = do
     e1 <- proofs p1
-    e2 <- proofs p1
+    e2 <- proofs p2
     pure $ accumEither e1 e2
-proofs Empty            = pure $ Right []
+proofs Empty            = pure $ Left mempty
 proofs (Failure err)    = pure $ Left err
 proofs (Axiom ext)      = pure $ Right [(ext, [])]
 

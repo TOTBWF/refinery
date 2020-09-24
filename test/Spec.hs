@@ -8,6 +8,9 @@
 
 module Main where
 
+import Control.Monad
+import Control.Applicative
+import Data.List
 import Data.Function
 import Data.Functor.Identity
 import Test.Hspec
@@ -21,8 +24,9 @@ testBatch (batchName, tests) = describe ("laws for: " ++ batchName) $
   foldr (>>) (return ()) (map (uncurry it) tests)
 
 
-instance (Semigroup err, MonadExtract ext m, EqProp (m (Either err [(ext, [a])])))
+instance (Ord ext, Ord a, Monoid err, MonadExtract ext m, EqProp (m (Either err [(ext, [a])])))
       => EqProp (ProofStateT ext ext err m a) where
+  -- (=-=) a b = (=-=) ((fmap . fmap) sort (proofs a)) ((fmap . fmap) sort (proofs b))
   (=-=) = (=-=) `on` proofs
 
 instance MonadExtract Int Identity where
@@ -31,16 +35,22 @@ instance MonadExtract Int Identity where
 -- deriving anyclass instance (Show ext', Arbitrary ext', EqProp err, EqProp ext, EqProp a, EqProp (m (ProofStateT ext' ext err m a)))
 --   => EqProp (ProofStateT ext' ext err m a)
 
+-- $>
+
 instance (CoArbitrary ext', Arbitrary ext, Arbitrary err, Arbitrary a, Arbitrary (m (ProofStateT ext' ext err m a)))
       => Arbitrary (ProofStateT ext' ext err m a) where
   arbitrary = oneof
-    [ Subgoal <$> arbitrary <*> arbitrary
+    [ Subgoal <$> decayArbitrary 2 <*> decayArbitrary 2
     , Effect  <$> arbitrary
-    , Alt     <$> arbitrary <*> arbitrary
+    , Alt     <$> decayArbitrary 2 <*> decayArbitrary 2
     , pure Empty
     , Failure <$> arbitrary
     , Axiom   <$> arbitrary
     ]
+  shrink = genericShrink
+
+decayArbitrary :: Arbitrary a => Int -> Gen a
+decayArbitrary n = scale (`div` n) arbitrary
 
 main :: IO ()
 main = hspec $ do
