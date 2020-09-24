@@ -28,7 +28,7 @@ module Refinery.Tactic.Internal
   -- , asRule
   , MonadRule(..)
   , RuleT(..)
-  , mapRuleT
+  -- , mapRuleT
   , MonadProvable(..)
   , ProvableT(..)
   , Provable
@@ -95,16 +95,22 @@ instance (MonadProvable jdg m, MonadState s m) => MonadState s (TacticT jdg ext 
   get = lift get
   put = lift . put
 
--- -- | Helper function for making "stateful" tactics like "<@>"
--- stateful :: (Monad m) => TacticT jdg ext err m a -> (jdg -> RuleT jdg ext (StateT s m) ext) -> s -> TacticT jdg ext err m a
--- stateful (TacticT t) f s = TacticT $ StateT $ \j -> ProofStateT $
---   evalStateP s $ action >\\ (hoist lift $ unProofStateT $ runStateT t j)
---   where
---     action (a, j) = (\j' -> request (a, j')) >\\ (unRuleT $ f j)
+-- | Helper function for making "stateful" tactics like "<@>"
+stateful
+    :: (Monad m)
+    => TacticT jdg ext err m a
+    -> (jdg -> RuleT jdg ext err (StateT s m) ext)
+    -> s
+    -> TacticT jdg ext err m a
+stateful (TacticT t) f s =
+  TacticT $ StateT $ \j -> _ $ runStateT t j
+  -- evalStateP s $ action >\\ (hoist lift $ unProofStateT $ runStateT t j)
+  -- where
+  --   action (a, j) = (\j' -> request (a, j')) >\\ (unRuleT $ f j)
 
--- -- | Transforms a tactic into a rule. Useful for doing things with @'stateful'@.
--- asRule :: (Monad m) => jdg -> TacticT jdg ext err m a -> RuleT jdg ext m ext
--- asRule j t = RuleT $ unProofStateT $ execStateT (unTacticT t) j
+-- | Transforms a tactic into a rule. Useful for doing things with @'stateful'@.
+asRule :: (Monad m) => jdg -> TacticT jdg ext err m a -> RuleT jdg ext err m ext
+asRule j t = RuleT $ execStateT (unTacticT t) j
 
 -- | A @'RuleT'@ is a monad transformer for creating inference rules.
 newtype RuleT jdg ext err m a = RuleT
@@ -137,6 +143,9 @@ instance MonadTrans (RuleT jdg ext err) where
 instance MFunctor (RuleT jdg ext err) where
   hoist nat = hoist nat . coerce
 
+instance MonadIO m => MonadIO (RuleT jdg ext err m) where
+  liftIO = lift . liftIO
+
 
 --   deriving ( Functor
 --            , Applicative
@@ -151,9 +160,9 @@ instance MFunctor (RuleT jdg ext err) where
 --            , MFunctor
 --            )
 
--- | Map the unwrapped computation using the given function
-mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext err m a -> RuleT jdg ext err m b
-mapRuleT f (RuleT m) = undefined -- RuleT $ m >>= (lift . f . return)
+-- -- | Map the unwrapped computation using the given function
+-- mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext err m a -> RuleT jdg ext err m b
+-- mapRuleT f (RuleT m) = RuleT $ _
 
 class (Monad m) => MonadRule jdg ext m | m -> jdg, m -> ext where
   -- | Create a subgoal, and return the resulting extract.
@@ -162,7 +171,7 @@ class (Monad m) => MonadRule jdg ext m | m -> jdg, m -> ext where
   subgoal = lift . subgoal
 
 instance (Monad m) => MonadRule jdg ext (RuleT jdg ext err m) where
-  subgoal j = undefined -- RuleT $ request j
+  subgoal j = RuleT $ Subgoal j Axiom
 
 instance (MonadRule jdg ext m) => MonadRule jdg ext (ReaderT env m)
 instance (MonadRule jdg ext m) => MonadRule jdg ext (StateT env m)
