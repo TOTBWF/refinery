@@ -92,3 +92,4 @@ runTacticT t j = proofs $ fmap snd $ proofState t j
 -- | Turn an inference rule into a tactic.
 rule :: (Monad m) => (jdg -> RuleT jdg ext err m ext) -> TacticT jdg ext err m ()
 rule r = tactic $ \j -> fmap ((),) $ unRuleT (r j)
+

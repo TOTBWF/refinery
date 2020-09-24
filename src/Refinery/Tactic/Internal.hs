@@ -1,14 +1,16 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE DefaultSignatures          #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -35,6 +37,7 @@ module Refinery.Tactic.Internal
   )
 where
 
+import GHC.Generics
 import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Except
@@ -67,7 +70,11 @@ newtype TacticT jdg ext err m a = TacticT { unTacticT :: StateT jdg (ProofStateT
            , MonadIO
            , MonadThrow
            , MonadCatch
+           , Generic
            )
+
+instance (Monoid jdg, Show a, Show jdg, Show err, Show ext) => Show (TacticT jdg ext err m a) where
+  show = show . flip runStateT mempty . unTacticT
 
 -- | Helper function for producing a tactic.
 tactic :: (jdg -> ProofStateT ext ext err m (a, jdg)) -> TacticT jdg ext err m a
@@ -104,6 +111,10 @@ instance (MonadProvable jdg m, MonadState s m) => MonadState s (TacticT jdg ext 
 newtype RuleT jdg ext err m a = RuleT
   { unRuleT :: ProofStateT ext a err m jdg
   }
+  deriving stock Generic
+
+instance (Show jdg, Show err, Show a) => Show (RuleT jdg ext err m a) where
+  show = show . unRuleT
 
 instance Functor m => Functor (RuleT jdg ext err m) where
   fmap = coerce mapExtract'
