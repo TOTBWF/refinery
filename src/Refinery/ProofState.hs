@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -fdefer-typed-holes #-}
 {-# LANGUAGE DefaultSignatures      #-}
 {-# LANGUAGE DeriveGeneric          #-}
@@ -8,6 +9,7 @@
 {-# LANGUAGE LambdaCase             #-}
 {-# LANGUAGE MultiParamTypeClasses  #-}
 {-# LANGUAGE TypeFamilies           #-}
+{-# LANGUAGE ScopedTypeVariables    #-}
 {-# LANGUAGE UndecidableInstances   #-}
 
 -----------------------------------------------------------------------------
@@ -32,7 +34,7 @@ import           Control.Monad.Except
 import           Control.Monad.State
 import           Control.Monad.Logic
 import           Control.Monad.Morph
-import           Control.Monad.Reader.Class
+import           Control.Monad.Reader
 
 import           GHC.Generics
 
@@ -128,26 +130,22 @@ class (Monad m) => MonadExtract ext m | m -> ext where
   hole = lift hole
 
 -- TODO [Reed] Add the rest of the instances
+instance (MonadExtract ext m) => MonadExtract ext (ReaderT r m)
 instance (MonadExtract ext m) => MonadExtract ext (StateT s m)
 instance (MonadExtract ext m) => MonadExtract ext (ExceptT err m)
 
-proofs :: (Monoid err, MonadExtract ext m) => ProofStateT ext ext err m goal -> m (Either err (ext, [goal]))
-proofs p = runExceptT $ runStateT (proofs' p) []
-
--- TODO [Reed] Use a dlist
-proofs'
-    :: (Monoid err, MonadExtract ext m)
-    => ProofStateT ext ext err m goal
-    -> StateT [goal] (ExceptT err m) ext
-proofs' (Subgoal goal k) = do
-    h <- hole
-    modify (++ [goal])
-    proofs' $ k h
-proofs' (Effect m)       = proofs' =<< (lift $ lift m)
-proofs' (Alt p1 p2)      = (proofs' p1) `catchError` (\_ -> proofs' p2)
-proofs' Empty            = throwError mempty
-proofs' (Failure err)    = throwError err
-proofs' (Axiom ext)      = pure ext
+proofs :: forall ext err m goal. (MonadExtract ext m) => ProofStateT ext ext err m goal -> m [Either err (ext, [goal])]
+proofs p = go [] p
+    where
+      go goals (Subgoal goal k) = do
+         h <- hole
+         -- TODO [Reed] Use a dlist
+         (go (goals ++ [goal]) $ k h)
+      go goals (Effect m) = go goals =<< m
+      go goals (Alt p1 p2) = liftA2 (<>) (go goals p1) (go goals p2)
+      go _ Empty = pure []
+      go _ (Failure err) = pure [throwError err]
+      go goals (Axiom ext) = pure [Right (ext, goals)]
 
 accumEither :: (Semigroup a, Semigroup b) => Either a b -> Either a b -> Either a b
 accumEither (Left a1) (Left a2)   = Left (a1 <> a2)
