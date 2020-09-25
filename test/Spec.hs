@@ -44,7 +44,7 @@ instance ( Show jdg
 
 instance ( Show jdg
          , Arbitrary jdg
-         , EqProp (m [Either err (ext , [jdg])])
+         , EqProp (m [Either err (ext, [jdg])])
          , MonadExtract ext m
          )
       => EqProp (RuleT jdg ext err m ext) where
@@ -82,7 +82,7 @@ instance ( CoArbitrary jdg
          , Arbitrary err
          , CoArbitrary ext
          , Arbitrary jdg
-         , Arbitrary (m (ProofStateT ext ext err m (a , jdg)))
+         , Arbitrary (m (ProofStateT ext ext err m (a, jdg)))
          )
       => Arbitrary (TacticT jdg ext err m a) where
   arbitrary = fmap (TacticT . StateT) arbitrary
