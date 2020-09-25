@@ -65,19 +65,18 @@ instance ( CoArbitrary ext'
          )
       => Arbitrary (ProofStateT ext' ext err m a) where
   arbitrary = getSize >>= \case
-    n | n <= 1 -> oneof
-      [ pure Empty
-      , Failure <$> arbitrary
-      , Axiom   <$> arbitrary
-      ]
-    _ -> oneof
+    n | n <= 1 -> oneof small
+    _ -> oneof $
       [ Subgoal <$> decayArbitrary 2 <*> decayArbitrary 2
       , Effect  <$> arbitrary
       , Alt     <$> decayArbitrary 2 <*> decayArbitrary 2
-      , pure Empty
-      , Failure <$> arbitrary
-      , Axiom   <$> arbitrary
-      ]
+      ] ++ small
+    where
+      small =
+        [ pure Empty
+        , Failure <$> arbitrary
+        , Axiom   <$> arbitrary
+        ]
   shrink = genericShrink
 
 instance (Arbitrary (m (a, s)), CoArbitrary s) => Arbitrary (StateT s m a) where
