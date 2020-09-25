@@ -12,6 +12,7 @@
 
 module Main where
 
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Logic.Class
 import Control.Monad.State.Strict (StateT (..))
@@ -120,6 +121,7 @@ main = hspec $ do
     testBatch $ monad       (undefined :: ProofStateTest (Int, Int, Int))
     testBatch $ monadPlus   (undefined :: ProofStateTest (Int, Int))
     testBatch $ monadLogic  (undefined :: ProofStateTest (Int, Int))
+    it "left-alt bind" $ property $ leftAltBind @ProofStateTest @Int @Int
   describe "RuleT" $ do
     testBatch $ functor     (undefined :: RuleTest (Int, Int, Int))
     testBatch $ applicative (undefined :: RuleTest (Int, Int, Int))
@@ -131,7 +133,15 @@ main = hspec $ do
     testBatch $ monad       (undefined :: TacticTest ((), (), ()))
     testBatch $ monadPlus   (undefined :: TacticTest ((), ()))
     testBatch $ monadLogic  (undefined :: TacticTest ((), ()))
+    it "left-alt bind" $ property $ leftAltBind @TacticTest @Int @()
 
+leftAltBind
+    :: forall m a b
+    . (EqProp (m b), Monad m, Alternative m)
+    => m a -> m a -> (a -> m b)
+    -> Property
+leftAltBind m1 m2 f =
+  ((m1 <|> m2) >>= f) =-= ((m1 >>= f) <|> (m2 >>= f))
 
 monadLogic
     :: forall m a b
