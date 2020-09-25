@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -63,14 +64,20 @@ instance ( CoArbitrary ext'
          , Arbitrary (m (ProofStateT ext' ext err m a))
          )
       => Arbitrary (ProofStateT ext' ext err m a) where
-  arbitrary = oneof
-    [ Subgoal <$> decayArbitrary 2 <*> decayArbitrary 2
-    , Effect  <$> arbitrary
-    , Alt     <$> decayArbitrary 2 <*> decayArbitrary 2
-    , pure Empty
-    , Failure <$> arbitrary
-    , Axiom   <$> arbitrary
-    ]
+  arbitrary = getSize >>= \case
+    n | n <= 1 -> oneof
+      [ pure Empty
+      , Failure <$> arbitrary
+      , Axiom   <$> arbitrary
+      ]
+    _ -> oneof
+      [ Subgoal <$> decayArbitrary 2 <*> decayArbitrary 2
+      , Effect  <$> arbitrary
+      , Alt     <$> decayArbitrary 2 <*> decayArbitrary 2
+      , pure Empty
+      , Failure <$> arbitrary
+      , Axiom   <$> arbitrary
+      ]
   shrink = genericShrink
 
 instance (Arbitrary (m (a, s)), CoArbitrary s) => Arbitrary (StateT s m a) where
