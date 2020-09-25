@@ -23,6 +23,7 @@ module Refinery.Tactic
   , many_
   , choice
   , progress
+  , MonadLogic(..)
   -- * Subgoal Manipulation
   , goal
   , focus
@@ -40,6 +41,7 @@ module Refinery.Tactic
 import Control.Applicative
 import Control.Monad.Except
 import Control.Monad.State.Strict
+import Control.Monad.Logic
 
 import Refinery.ProofState
 import Refinery.Tactic.Internal
@@ -54,11 +56,11 @@ import Refinery.Tactic.Internal
 t <@> ts = tactic $ \j -> subgoals (fmap (\t' (_,j') -> proofState t' j') ts) (proofState t j)
 
 -- | Tries to run a tactic, backtracking on failure
-try :: (MonadProvable jdg m, MonadPlus m) => TacticT jdg ext err m () -> TacticT jdg ext err m ()
+try :: (MonadProvable jdg m) => TacticT jdg ext err m () -> TacticT jdg ext err m ()
 try t = t <|> pure ()
 
 -- | Runs a tactic repeatedly until it fails
-many_ :: (MonadProvable jdg m, MonadPlus m) => TacticT jdg ext err m () -> TacticT jdg ext err m ()
+many_ :: (MonadProvable jdg m) => TacticT jdg ext err m () -> TacticT jdg ext err m ()
 many_ t = try (t >> many_ t)
 
 -- | Get the current goal
@@ -67,9 +69,9 @@ goal = TacticT $ get
 
 -- | @choice err ts@ tries to apply a series of tactics @ts@, and commits to the
 -- 1st tactic that succeeds. If they all fail, then @err@ is thrown
-choice :: (MonadProvable jdg m, MonadPlus m) => [TacticT jdg ext err m a] -> TacticT jdg ext err m a
+choice :: (MonadProvable jdg m) => [TacticT jdg ext err m a] -> TacticT jdg ext err m a
 choice [] = empty
-choice (t:ts) = t <|> choice ts
+choice (t:ts) = t `interleave` choice ts
 
 -- -- | @progress eq err t@ applies the tactic @t@, and checks to see if the
 -- -- resulting subgoals are all equal to the initial goal by using @eq@. If they
