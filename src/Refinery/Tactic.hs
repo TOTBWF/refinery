@@ -19,6 +19,7 @@ module Refinery.Tactic
   , runTacticT
   -- * Tactic Combinators
   , (<@>)
+  , (<%>)
   , try
   , many_
   , choice
@@ -46,7 +47,6 @@ import Control.Monad.Logic
 import Refinery.ProofState
 import Refinery.Tactic.Internal
 
-
 -- -- | Create a tactic that applies each of the tactics in the list to one subgoal.
 -- --
 -- -- When the number of subgoals is greater than the number of provided tactics,
@@ -54,6 +54,12 @@ import Refinery.Tactic.Internal
 -- -- less than the number of provided tactics, the remaining tactics are ignored.
 (<@>) :: (MonadProvable jdg m) => TacticT jdg ext err m a -> [TacticT jdg ext err m a] -> TacticT jdg ext err m a
 t <@> ts = tactic $ \j -> subgoals (fmap (\t' (_,j') -> proofState t' j') ts) (proofState t j)
+
+infixr 3 <%>
+
+(<%>) :: TacticT jdg ext err m a -> TacticT jdg ext err m a -> TacticT jdg ext err m a
+t1 <%> t2 = tactic $ \j -> Interleave (proofState t1 j) (proofState t2 j)
+
 
 -- | Tries to run a tactic, backtracking on failure
 try :: (MonadProvable jdg m) => TacticT jdg ext err m () -> TacticT jdg ext err m ()
@@ -67,11 +73,9 @@ many_ t = try (t >> many_ t)
 goal :: (MonadProvable jdg m) => TacticT jdg ext err m jdg
 goal = TacticT $ get
 
--- | @choice err ts@ tries to apply a series of tactics @ts@, and commits to the
--- 1st tactic that succeeds. If they all fail, then @err@ is thrown
 choice :: (MonadProvable jdg m) => [TacticT jdg ext err m a] -> TacticT jdg ext err m a
 choice [] = empty
-choice (t:ts) = t `interleave` choice ts
+choice (t:ts) = t <%> choice ts
 
 -- -- | @progress eq err t@ applies the tactic @t@, and checks to see if the
 -- -- resulting subgoals are all equal to the initial goal by using @eq@. If they

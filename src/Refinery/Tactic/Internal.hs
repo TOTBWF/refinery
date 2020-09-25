@@ -44,12 +44,10 @@ import Control.Monad.Except
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.State.Strict
-import Control.Monad.Trans (MonadTrans(..))
-import Control.Monad.Logic
-import Control.Monad.IO.Class (MonadIO(..))
+import Control.Monad.Trans ()
+import Control.Monad.IO.Class ()
 import Control.Monad.Morph
 
-import Data.Bifunctor
 import Data.Coerce
 
 import Refinery.ProofState
@@ -100,9 +98,6 @@ mapTacticT f (TacticT m) = TacticT $ m >>= (lift . lift . f . return)
 instance MonadTrans (TacticT jdg ext err) where
   lift m = TacticT $ lift $ lift m
 
-instance (MonadProvable jdg m) => MonadLogic (TacticT jdg ext err m) where
-    msplit = TacticT . fmap (fmap (second TacticT)) . msplit . unTacticT
-
 instance (MonadProvable jdg m, MonadState s m) => MonadState s (TacticT jdg ext err m) where
   get = lift get
   put = lift . put
@@ -125,12 +120,13 @@ instance Monad m => Applicative (RuleT jdg ext err m) where
 
 instance Monad m => Monad (RuleT jdg ext err m) where
   return = coerce . Axiom
-  RuleT (Subgoal goal k) >>= f = coerce $ Subgoal goal $ fmap (bindAlaCoerce f) k
-  RuleT (Effect m)       >>= f = coerce $ Effect $ fmap (bindAlaCoerce f) m
-  RuleT (Alt p1 p2)      >>= f = coerce $ Alt (bindAlaCoerce f p1) (bindAlaCoerce f p2)
-  RuleT Empty            >>= _ = coerce $ Empty
-  RuleT (Failure err)    >>= _ = coerce $ Failure err
-  RuleT (Axiom e)        >>= f = f e
+  RuleT (Subgoal goal k)   >>= f = coerce $ Subgoal goal $ fmap (bindAlaCoerce f) k
+  RuleT (Effect m)         >>= f = coerce $ Effect $ fmap (bindAlaCoerce f) m
+  RuleT (Alt p1 p2)        >>= f = coerce $ Alt (bindAlaCoerce f p1) (bindAlaCoerce f p2)
+  RuleT (Interleave p1 p2) >>= f = coerce $ Interleave (bindAlaCoerce f p1) (bindAlaCoerce f p2)
+  RuleT Empty              >>= _ = coerce $ Empty
+  RuleT (Failure err)      >>= _ = coerce $ Failure err
+  RuleT (Axiom e)          >>= f = f e
 
 bindAlaCoerce
   :: (Monad m, Coercible c (m b), Coercible a1 (m a2)) =>

@@ -10,6 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses  #-}
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
+
 {-# LANGUAGE UndecidableInstances   #-}
 
 -----------------------------------------------------------------------------
@@ -46,6 +47,7 @@ data ProofStateT ext' ext err m goal
     = Subgoal goal (ext' -> ProofStateT ext' ext err m goal)
     | Effect (m (ProofStateT ext' ext err m goal))
     | Alt (ProofStateT ext' ext err m goal) (ProofStateT ext' ext err m goal)
+    | Interleave (ProofStateT ext' ext err m goal) (ProofStateT ext' ext err m goal)
     | Empty
     | Failure err
     | Axiom ext
@@ -55,6 +57,7 @@ instance (Show goal, Show err, Show ext, Show (m (ProofStateT ext' ext err m goa
   show (Subgoal goal _) = "(Subgoal " <> show goal <> " <k>)"
   show (Effect m) = "(Effect " <> show m <> ")"
   show (Alt p1 p2) = "(Alt " <> show p1 <> " " <> show p2 <> ")"
+  show (Interleave p1 p2) = "(Interleave " <> show p1 <> " " <> show p2 <> ")"
   show Empty = "Empty"
   show (Failure err) = "(Failure " <> show err <> ")"
   show (Axiom ext) = "(Axiom " <> show ext <> ")"
@@ -63,6 +66,7 @@ instance Functor m => Functor (ProofStateT ext' ext err m) where
     fmap f (Subgoal goal k) = Subgoal (f goal) (fmap f . k)
     fmap f (Effect m) = Effect (fmap (fmap f) m)
     fmap f (Alt p1 p2) = Alt (fmap f p1) (fmap f p2)
+    fmap f (Interleave p1 p2) = Interleave (fmap f p1) (fmap f p2)
     fmap _ Empty = Empty
     fmap _ (Failure err) = Failure err
     fmap _ (Axiom ext) = Axiom ext
@@ -76,6 +80,7 @@ instance MFunctor (ProofStateT ext' ext err) where
   hoist nat (Subgoal a k) = Subgoal a $ fmap (hoist nat) k
   hoist nat (Effect m)    = Effect $ nat $ fmap (hoist nat) m
   hoist nat (Alt p1 p2)   = Alt (hoist nat p1) (hoist nat p2)
+  hoist nat (Interleave p1 p2)   = Interleave (hoist nat p1) (hoist nat p2)
   hoist _ (Failure err) = Failure err
   hoist _ Empty         = Empty
   hoist _ (Axiom ext)   = Axiom ext
@@ -88,6 +93,7 @@ applyCont
 applyCont k (Subgoal goal k') = Subgoal goal (applyCont k . k')
 applyCont k (Effect m) = Effect (fmap (applyCont k) m)
 applyCont k (Alt p1 p2) = Alt (applyCont k p1) (applyCont k p2)
+applyCont k (Interleave p1 p2) = Interleave (applyCont k p1) (applyCont k p2)
 applyCont _ Empty = Empty
 applyCont _ (Failure err) = (Failure err)
 applyCont k (Axiom ext) = k ext
@@ -97,6 +103,7 @@ instance Functor m => Monad (ProofStateT ext ext err m) where
     (Subgoal a k) >>= f = applyCont ((>>= f) . k) (f a)
     (Effect m)    >>= f = Effect (fmap (>>= f) m)
     (Alt p1 p2)   >>= f = Alt (p1 >>= f) (p2 >>= f)
+    (Interleave p1 p2)   >>= f = Interleave (p1 >>= f) (p2 >>= f)
     (Failure err) >>= _ = Failure err
     Empty         >>= _ = Empty
     (Axiom ext)   >>= _ = Axiom ext
@@ -111,16 +118,6 @@ instance (Monad m) => Alternative (ProofStateT ext ext err m) where
 instance (Monad m) => MonadPlus (ProofStateT ext ext err m) where
     mzero = empty
     mplus = (<|>)
-
-instance (Monad m) => MonadLogic (ProofStateT ext ext err m) where
-    msplit (Subgoal goal _) = Subgoal (Just (goal, Empty)) Axiom
-    msplit (Effect m)       = Effect (fmap msplit m)
-    msplit (Alt p1 p2)      = msplit p1 >>= \case
-        Just (a, rest) -> pure $ Just (a, rest <|> p2)
-        Nothing        -> msplit p2
-    msplit Empty            = pure Nothing
-    msplit (Failure _)    = pure Nothing
-    msplit (Axiom _)      = pure Nothing
 
 class (Monad m) => MonadExtract ext m | m -> ext where
   -- | Generates a "hole" of type @ext@, which should represent
@@ -143,6 +140,7 @@ proofs p = go [] p
          (go (goals ++ [goal]) $ k h)
       go goals (Effect m) = go goals =<< m
       go goals (Alt p1 p2) = liftA2 (<>) (go goals p1) (go goals p2)
+      go goals (Interleave p1 p2) = liftA2 (interleave) (go goals p1) (go goals p2)
       go _ Empty = pure []
       go _ (Failure err) = pure [throwError err]
       go goals (Axiom ext) = pure [Right (ext, goals)]
@@ -163,6 +161,7 @@ instance (MonadCatch m) => MonadCatch (ProofStateT ext ext err m) where
     catch (Subgoal goal k) handle = Subgoal goal (flip catch handle . k)
     catch (Effect m) handle = Effect . catch m $ pure . handle
     catch (Alt p1 p2) handle = catch p1 handle <|> catch p2 handle
+    catch (Interleave p1 p2) handle = catch p1 handle <|> catch p2 handle
     catch Empty _ = Empty
     catch (Failure err) _ = Failure err
     catch (Axiom e) _ = (Axiom e)
@@ -173,6 +172,7 @@ instance (Monad m) => MonadError err (ProofStateT ext ext err m) where
     catchError (Subgoal goal k) handle = Subgoal goal (flip catchError handle . k)
     catchError (Effect m) handle = Effect (fmap (flip catchError handle) m)
     catchError (Alt p1 p2) handle = catchError p1 handle <|> catchError p2 handle
+    catchError (Interleave p1 p2) handle = catchError p1 handle <|> catchError p2 handle
     catchError Empty _ = Empty
     catchError (Failure err) handle = handle err
     catchError (Axiom e) _ = (Axiom e)
@@ -182,6 +182,7 @@ instance (MonadReader r m) => MonadReader r (ProofStateT ext ext err m) where
     local f (Subgoal goal k) = Subgoal goal (local f . k)
     local f (Effect m) = Effect (local f m)
     local f (Alt p1 p2) = Alt (local f p1) (local f p2)
+    local f (Interleave p1 p2) = Interleave (local f p1) (local f p2)
     local _ Empty = Empty
     local _ (Failure err) = (Failure err)
     local _ (Axiom e) = (Axiom e)
@@ -198,15 +199,19 @@ subgoals [] (Subgoal goal k) = applyCont k (pure goal)
 subgoals (f:fs) (Subgoal goal k)  = applyCont (subgoals fs . k) (f goal)
 subgoals fs (Effect m) = Effect (fmap (subgoals fs) m)
 subgoals fs (Alt p1 p2) = Alt (subgoals fs p1) (subgoals fs p2)
+subgoals fs (Interleave p1 p2) = Interleave (subgoals fs p1) (subgoals fs p2)
 subgoals _ (Failure err) = Failure err
 subgoals _ Empty = Empty
 subgoals _ (Axiom ext) = Axiom ext
+
+-- interleave :: ProofStateT ext' ext err m jdg
 
 mapExtract :: (Functor m) => (ext -> ext') -> (ext' -> ext) -> ProofStateT ext ext err m jdg -> ProofStateT ext' ext' err m jdg
 mapExtract into out = \case
     Subgoal goal k -> Subgoal goal $ mapExtract into out . k . out
     Effect m -> Effect (fmap (mapExtract into out) m)
     Alt t1 t2 -> Alt (mapExtract into out t1) (mapExtract into out t2)
+    Interleave t1 t2 -> Interleave (mapExtract into out t1) (mapExtract into out t2)
     Empty -> Empty
     Failure err -> Failure err
     Axiom ext -> Axiom $ into ext
@@ -216,6 +221,7 @@ mapExtract' into = \case
     Subgoal goal k -> Subgoal goal $ mapExtract' into . k
     Effect m -> Effect (fmap (mapExtract' into) m)
     Alt t1 t2 -> Alt (mapExtract' into t1) (mapExtract' into t2)
+    Interleave t1 t2 -> Interleave (mapExtract' into t1) (mapExtract' into t2)
     Empty -> Empty
     Failure err -> Failure err
     Axiom ext -> Axiom $ into ext

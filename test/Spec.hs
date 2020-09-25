@@ -14,6 +14,7 @@ module Main where
 
 import Control.Applicative
 import Control.Monad
+import Control.Monad.Error.Class
 import Control.Monad.Logic.Class
 import Control.Monad.State.Strict (StateT (..))
 import Data.Function
@@ -120,9 +121,8 @@ main = hspec $ do
     testBatch $ alternative (undefined :: ProofStateTest Int)
     testBatch $ monad       (undefined :: ProofStateTest (Int, Int, Int))
     testBatch $ monadPlus   (undefined :: ProofStateTest (Int, Int))
-    testBatch $ monadLogic  (undefined :: ProofStateTest (Int, Int))
-    it "left-alt bind"  $ property $ leftAltBind  @ProofStateTest @Int @Int
-    it "right-alt bind" $ property $ rightAltBind @ProofStateTest @Int
+    it "interleave - mzero" $ property $ interleaveMZero @ProofStateTest @Int
+    it "interleave - mplus" $ property $ interleaveMPlus @ProofStateTest @Int
   describe "RuleT" $ do
     testBatch $ functor     (undefined :: RuleTest (Int, Int, Int))
     testBatch $ applicative (undefined :: RuleTest (Int, Int, Int))
@@ -133,9 +133,6 @@ main = hspec $ do
     testBatch $ alternative (undefined :: TacticTest ())
     testBatch $ monad       (undefined :: TacticTest ((), (), ()))
     testBatch $ monadPlus   (undefined :: TacticTest ((), ()))
-    testBatch $ monadLogic  (undefined :: TacticTest ((), ()))
-    it "left-alt bind"  $ property $ leftAltBind  @TacticTest @Int @Int
-    it "right-alt bind" $ property $ rightAltBind @TacticTest @Int
 
 leftAltBind
     :: forall m a b
@@ -152,6 +149,23 @@ rightAltBind
     -> Property
 rightAltBind m1 m2 m3 =
   (m1 >> (m2 <|> m3)) =-= ((m1 >> m2) <|> (m1 >> m3))
+
+interleaveMZero
+    :: forall m a
+    . (EqProp (m a), Monad m, MonadLogic m)
+    => m a
+    -> Property
+interleaveMZero m =
+    (mzero `interleave` m) =-= m
+
+interleaveMPlus
+    :: forall m a
+    . (EqProp (m a), Monad m, MonadLogic m)
+    => a -> m a -> m a
+    -> Property
+interleaveMPlus a m1 m2 =
+    ((pure a <|> m1) `interleave` m2) =-= (pure a <|> (m2 `interleave` m1))
+
 
 monadLogic
     :: forall m a b
