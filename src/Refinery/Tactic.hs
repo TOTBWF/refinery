@@ -60,7 +60,7 @@ try :: (MonadProvable jdg m) => TacticT jdg ext err m () -> TacticT jdg ext err 
 try t = t <|> pure ()
 
 -- | Runs a tactic repeatedly until it fails
-many_ :: (MonadProvable jdg m, MonadPlus m) => TacticT jdg ext err m () -> TacticT jdg ext err m ()
+many_ :: (MonadProvable jdg m) => TacticT jdg ext err m () -> TacticT jdg ext err m ()
 many_ t = try (t >> many_ t)
 
 -- | Get the current goal
@@ -69,7 +69,7 @@ goal = TacticT $ get
 
 -- | @choice err ts@ tries to apply a series of tactics @ts@, and commits to the
 -- 1st tactic that succeeds. If they all fail, then @err@ is thrown
-choice :: (MonadProvable jdg m, MonadPlus m) => [TacticT jdg ext err m a] -> TacticT jdg ext err m a
+choice :: (MonadProvable jdg m) => [TacticT jdg ext err m a] -> TacticT jdg ext err m a
 choice [] = empty
 choice (t:ts) = t `interleave` choice ts
 
