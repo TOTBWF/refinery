@@ -113,7 +113,7 @@ instance (Monad m) => MonadPlus (ProofStateT ext ext err m) where
     mplus = (<|>)
 
 instance (Monad m) => MonadLogic (ProofStateT ext ext err m) where
-    msplit (Subgoal goal k) = Subgoal (Just (goal, Empty)) (msplit . k)
+    msplit (Subgoal goal _) = Subgoal (Just (goal, Empty)) Axiom
     msplit (Effect m)       = Effect (fmap msplit m)
     msplit (Alt p1 p2)      = msplit p1 >>= \case
         Just (a, rest) -> pure $ Just (a, rest <|> p2)
