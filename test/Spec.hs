@@ -121,7 +121,8 @@ main = hspec $ do
     testBatch $ monad       (undefined :: ProofStateTest (Int, Int, Int))
     testBatch $ monadPlus   (undefined :: ProofStateTest (Int, Int))
     testBatch $ monadLogic  (undefined :: ProofStateTest (Int, Int))
-    it "left-alt bind" $ property $ leftAltBind @ProofStateTest @Int @Int
+    it "left-alt bind"  $ property $ leftAltBind  @ProofStateTest @Int @Int
+    it "right-alt bind" $ property $ rightAltBind @ProofStateTest @Int
   describe "RuleT" $ do
     testBatch $ functor     (undefined :: RuleTest (Int, Int, Int))
     testBatch $ applicative (undefined :: RuleTest (Int, Int, Int))
@@ -133,7 +134,8 @@ main = hspec $ do
     testBatch $ monad       (undefined :: TacticTest ((), (), ()))
     testBatch $ monadPlus   (undefined :: TacticTest ((), ()))
     testBatch $ monadLogic  (undefined :: TacticTest ((), ()))
-    it "left-alt bind" $ property $ leftAltBind @TacticTest @Int @()
+    it "left-alt bind"  $ property $ leftAltBind  @TacticTest @Int @Int
+    it "right-alt bind" $ property $ rightAltBind @TacticTest @Int
 
 leftAltBind
     :: forall m a b
@@ -142,6 +144,14 @@ leftAltBind
     -> Property
 leftAltBind m1 m2 f =
   ((m1 <|> m2) >>= f) =-= ((m1 >>= f) <|> (m2 >>= f))
+
+rightAltBind
+    :: forall m a
+    . (EqProp (m a), Monad m, Alternative m)
+    => m () -> m a -> m a
+    -> Property
+rightAltBind m1 m2 m3 =
+  (m1 >> (m2 <|> m3)) =-= ((m1 >> m2) <|> (m1 >> m3))
 
 monadLogic
     :: forall m a b
