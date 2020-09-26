@@ -15,6 +15,7 @@ module Main where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.State.Strict (StateT (..))
+import Control.Monad.State.Class
 import Data.Function
 import Data.Functor.Identity
 import Data.Monoid (Sum (..))
@@ -79,6 +80,7 @@ instance ( CoArbitrary ext'
       [ Subgoal <$> decayArbitrary 2 <*> decayArbitrary 2
       , Effect  <$> arbitrary
       , Alt     <$> decayArbitrary 2 <*> decayArbitrary 2
+      , Stateful <$> arbitrary
       ] ++ small
     where
       small =
@@ -133,6 +135,7 @@ main = hspec $ do
     testBatch $ monad       (undefined :: ProofStateTest (Int, Int, Int))
     testBatch $ monadPlus   (undefined :: ProofStateTest (Int, Int))
     testBatch $ monadState  (undefined :: ProofStateTest (Int, Int))
+    it "distrib put over <|>" $ property $ distribPut (undefined :: ProofStateTest (Int))
   describe "RuleT" $ do
     testBatch $ functor     (undefined :: RuleTest (Int, Int, Int))
     testBatch $ applicative (undefined :: RuleTest (Int, Int, Int))
@@ -146,6 +149,7 @@ main = hspec $ do
     testBatch $ monadState  (undefined :: TacticTest ((), ()))
     it "interleave - mzero" $ property $ interleaveMZero (undefined :: TacticTest Int)
     it "interleave - mplus" $ property $ interleaveMPlus (undefined :: TacticTest Int)
+    it "distrib put over <|>" $ property $ distribPut (undefined :: TacticTest ())
 
 leftAltBind
     :: forall m a b
@@ -187,4 +191,24 @@ interleaveMPlus
 interleaveMPlus _ a m1 m2 =
     ((pure a <|> m1) <%> m2) =-= (pure a <|> (m2 <%> m1))
 
+distribPut
+    :: forall s m a
+     . ( MonadState s m
+       , Alternative m
+       , EqProp (m a)
+       , Arbitrary (m a)
+       , Arbitrary s
+       , Show s
+       , Show (m a)
+       )
+    => m a -> Property
+distribPut _ = property $ do
+  s <- arbitrary @s
+  m1 <- arbitrary @(m a)
+  m2 <- arbitrary @(m a)
+  pure $
+    counterexample (show s) $
+    counterexample (show m1) $
+    counterexample (show m2) $
+      (put s >> (m1 <|> m2)) =-= ((put s >> m1) <|> (put s >> m2))
 
