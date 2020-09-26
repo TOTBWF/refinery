@@ -14,8 +14,6 @@ module Main where
 
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Error.Class
-import Control.Monad.Logic.Class
 import Control.Monad.State.Strict (StateT (..))
 import Data.Function
 import Data.Functor.Identity
@@ -27,30 +25,37 @@ import Test.Hspec
 import Test.QuickCheck hiding (Failure)
 import Test.QuickCheck.Checkers
 import Test.QuickCheck.Classes
+import Checkers
 
 testBatch :: TestBatch -> Spec
 testBatch (batchName, tests) = describe ("laws for: " ++ batchName) $
   foldr (>>) (return ()) (map (uncurry it) tests)
 
 
-instance (MonadExtract ext m, EqProp (m [Either err (ext, [a])]))
-      => EqProp (ProofStateT ext ext err m a) where
-  (=-=) = (=-=) `on` proofs
+instance (MonadExtract ext m, EqProp (m [Either err (ext, [a])]), Arbitrary s)
+      => EqProp (ProofStateT ext ext err s m a) where
+  (=-=) a b = property $ do
+    s <- arbitrary
+    pure $ ((=-=) `on` proofs s) a b
 
 instance ( Show jdg
          , MonadExtract ext m
          , Arbitrary jdg
          , EqProp (m [Either err (ext, [jdg])])
+         , Show s
+         , Arbitrary s
          )
-      => EqProp (TacticT jdg ext err m a) where
+      => EqProp (TacticT jdg ext err s m a) where
   (=-=) = (=-=) `on` runTacticT . (() <$)
 
 instance ( Show jdg
          , Arbitrary jdg
          , EqProp (m [Either err (ext, [jdg])])
          , MonadExtract ext m
+         , Show s
+         , Arbitrary s
          )
-      => EqProp (RuleT jdg ext err m ext) where
+      => EqProp (RuleT jdg ext err s m ext) where
   (=-=) = (=-=) `on` rule . const
 
 instance MonadExtract Int Identity where
@@ -63,9 +68,11 @@ instance ( CoArbitrary ext'
          , Arbitrary ext
          , Arbitrary err
          , Arbitrary a
-         , Arbitrary (m (ProofStateT ext' ext err m a))
+         , Arbitrary (m (ProofStateT ext' ext err s m a))
+         , CoArbitrary s
+         , Arbitrary s
          )
-      => Arbitrary (ProofStateT ext' ext err m a) where
+      => Arbitrary (ProofStateT ext' ext err s m a) where
   arbitrary = getSize >>= \case
     n | n <= 1 -> oneof small
     _ -> oneof $
@@ -90,9 +97,11 @@ instance ( CoArbitrary jdg
          , Arbitrary err
          , CoArbitrary ext
          , Arbitrary jdg
-         , Arbitrary (m (ProofStateT ext ext err m (a, jdg)))
+         , Arbitrary (m (ProofStateT ext ext err s m (a, jdg)))
+         , CoArbitrary s
+         , Arbitrary s
          )
-      => Arbitrary (TacticT jdg ext err m a) where
+      => Arbitrary (TacticT jdg ext err s m a) where
   arbitrary = fmap (TacticT . StateT) arbitrary
   shrink = genericShrink
 
@@ -100,18 +109,20 @@ instance ( Arbitrary a
          , Arbitrary err
          , CoArbitrary ext
          , Arbitrary jdg
-         , Arbitrary (m (ProofStateT ext a err m jdg))
+         , Arbitrary (m (ProofStateT ext a err s m jdg))
+         , CoArbitrary s
+         , Arbitrary s
          )
-      => Arbitrary (RuleT jdg ext err m a) where
+      => Arbitrary (RuleT jdg ext err s m a) where
   arbitrary = fmap RuleT arbitrary
   shrink = genericShrink
 
 decayArbitrary :: Arbitrary a => Int -> Gen a
 decayArbitrary n = scale (`div` n) arbitrary
 
-type ProofStateTest = ProofStateT Int Int String Identity
-type RuleTest = RuleT Int Int String Identity
-type TacticTest = TacticT (Sum Int) Int String Identity
+type ProofStateTest = ProofStateT Int Int String Int Identity
+type RuleTest = RuleT Int Int String Int Identity
+type TacticTest = TacticT (Sum Int) Int String Int Identity
 
 main :: IO ()
 main = hspec $ do
@@ -121,8 +132,7 @@ main = hspec $ do
     testBatch $ alternative (undefined :: ProofStateTest Int)
     testBatch $ monad       (undefined :: ProofStateTest (Int, Int, Int))
     testBatch $ monadPlus   (undefined :: ProofStateTest (Int, Int))
-    it "interleave - mzero" $ property $ interleaveMZero @ProofStateTest @Int
-    it "interleave - mplus" $ property $ interleaveMPlus @ProofStateTest @Int
+    testBatch $ monadState  (undefined :: ProofStateTest (Int, Int))
   describe "RuleT" $ do
     testBatch $ functor     (undefined :: RuleTest (Int, Int, Int))
     testBatch $ applicative (undefined :: RuleTest (Int, Int, Int))
@@ -133,6 +143,9 @@ main = hspec $ do
     testBatch $ alternative (undefined :: TacticTest ())
     testBatch $ monad       (undefined :: TacticTest ((), (), ()))
     testBatch $ monadPlus   (undefined :: TacticTest ((), ()))
+    testBatch $ monadState  (undefined :: TacticTest ((), ()))
+    it "interleave - mzero" $ property $ interleaveMZero (undefined :: TacticTest Int)
+    it "interleave - mplus" $ property $ interleaveMPlus (undefined :: TacticTest Int)
 
 leftAltBind
     :: forall m a b
@@ -151,84 +164,27 @@ rightAltBind m1 m2 m3 =
   (m1 >> (m2 <|> m3)) =-= ((m1 >> m2) <|> (m1 >> m3))
 
 interleaveMZero
-    :: forall m a
-    . (EqProp (m a), Monad m, MonadLogic m)
-    => m a
+    :: forall m a jdg ext err s
+     . (MonadExtract ext m, EqProp (m [Either err (ext, [jdg])]),
+      Show jdg, Show s, Arbitrary jdg, Arbitrary s,
+      MonadProvable jdg m)
+    => TacticT jdg ext err s m a  -- ^ proxy
+    -> TacticT jdg ext err s m a
     -> Property
-interleaveMZero m =
-    (mzero `interleave` m) =-= m
+interleaveMZero _ m =
+    (mzero <%> m) =-= m
 
 interleaveMPlus
-    :: forall m a
-    . (EqProp (m a), Monad m, MonadLogic m)
-    => a -> m a -> m a
+    :: forall m a jdg ext err s
+     . (MonadExtract ext m, EqProp (m [Either err (ext, [jdg])]),
+      Show jdg, Show s, Arbitrary jdg, Arbitrary s,
+      MonadProvable jdg m)
+    => TacticT jdg ext err s m a  -- ^ proxy
+    -> a
+    -> TacticT jdg ext err s m a
+    -> TacticT jdg ext err s m a
     -> Property
-interleaveMPlus a m1 m2 =
-    ((pure a <|> m1) `interleave` m2) =-= (pure a <|> (m2 `interleave` m1))
+interleaveMPlus _ a m1 m2 =
+    ((pure a <|> m1) <%> m2) =-= (pure a <|> (m2 <%> m1))
 
-
-monadLogic
-    :: forall m a b
-     . ( CoArbitrary a
-       , Arbitrary (m b)
-       , Arbitrary a
-       , Arbitrary (m a)
-       , MonadPlus m
-       , MonadLogic m
-       , EqProp (m b)
-       , EqProp (m (Maybe (a, m a)))
-       , Show a
-       , Show (m a)
-       , Show (m b)
-       , Function a
-       )
-    => m (a, b)
-    -> TestBatch
-monadLogic _ =
-  ( "MonadLogic laws"
-  , [ ("msplit mzero", msplit @m @a mzero =-= return Nothing)
-    , ("msplit mplus", property $ do
-        a <- arbitrary
-        m <- arbitrary
-        pure $
-          counterexample (show a) $
-          counterexample (show m) $
-            msplit @m @a (return a `mplus` m) =-= return (Just (a, m))
-      )
-    , ("ifte return", property $ do
-        a <- arbitrary
-        thf <- arbitrary
-        let th = applyFun thf
-        el <- arbitrary
-        pure $
-          counterexample (show a) $
-          counterexample (show thf) $
-          counterexample (show el) $
-            ifte @m @a @b (return a) th el =-= th a
-      )
-    , ("ifte mzero", property $ do
-        thf <- arbitrary
-        let th = applyFun thf
-        el <- arbitrary @(m b)
-        pure $
-          counterexample (show thf) $
-          counterexample (show el) $
-            ifte @m @a @b mzero th el =-= el
-      )
-    , ("ifte mplus", property $ do
-        a <- arbitrary
-        m <- arbitrary
-        thf <- arbitrary
-        let th = applyFun thf
-        el <- arbitrary @(m b)
-        pure $
-          counterexample (show a) $
-          counterexample (show m) $
-          counterexample (show thf) $
-          counterexample (show el) $
-            ifte @m @a @b (return a `mplus` m) th el
-              =-= th a `mplus` (m >>= th)
-      )
-    ]
-  )
 
