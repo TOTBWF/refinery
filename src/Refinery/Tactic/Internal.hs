@@ -59,7 +59,7 @@ import Refinery.ProofState
 -- * @ext@ - The extract type. This is what we will recieve after running the tactic.
 -- * @m@ - The base monad.
 -- * @a@ - The return value. This to make @'TacticT'@ a monad, and will always be @'()'@
-newtype TacticT jdg ext err m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext ext err m) a }
+newtype TacticT jdg ext err s m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext ext err s m) a }
   deriving ( Functor
            , Alternative
            , MonadPlus
@@ -71,57 +71,57 @@ newtype TacticT jdg ext err m a = TacticT { unTacticT :: StateT jdg (ProofStateT
            , Generic
            )
 
-instance (Monoid jdg, Show a, Show jdg, Show err, Show ext, Show (m (ProofStateT ext ext err m (a, jdg)))) => Show (TacticT jdg ext err m a) where
+instance (Monoid jdg, Show a, Show jdg, Show err, Show ext, Show (m (ProofStateT ext ext err s m (a, jdg)))) => Show (TacticT jdg ext err s m a) where
   show = show . flip runStateT mempty . unTacticT
 
 -- | Helper function for producing a tactic.
-tactic :: (jdg -> ProofStateT ext ext err m (a, jdg)) -> TacticT jdg ext err m a
+tactic :: (jdg -> ProofStateT ext ext err s m (a, jdg)) -> TacticT jdg ext err s m a
 tactic t = TacticT $ StateT t
 
-proofState :: TacticT jdg ext err m a -> jdg -> ProofStateT ext ext err m (a, jdg)
+proofState :: TacticT jdg ext err s m a -> jdg -> ProofStateT ext ext err s m (a, jdg)
 proofState t j = runStateT (unTacticT t) j
 
-instance (MonadProvable jdg m) => Applicative (TacticT jdg ext err m) where
+instance (MonadProvable jdg m) => Applicative (TacticT jdg ext err s m) where
   pure a = TacticT $ StateT $ proving >=> \j -> pure (a, j)
   (<*>) = ap
 
-instance (MonadProvable jdg m) => Monad (TacticT jdg ext err m) where
+instance (MonadProvable jdg m) => Monad (TacticT jdg ext err s m) where
   return = pure
   t >>= k = TacticT $ StateT $ proving >=> \j -> do
     (a, j') <- runStateT (unTacticT t) j
     runStateT (unTacticT $ k a) =<< proving j'
 
 -- | Map the unwrapped computation using the given function
-mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext err m a -> TacticT jdg ext err m b
+mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext err s m a -> TacticT jdg ext err s m b
 mapTacticT f (TacticT m) = TacticT $ m >>= (lift . lift . f . return)
 
-instance MonadTrans (TacticT jdg ext err) where
+instance MonadTrans (TacticT jdg ext err s) where
   lift m = TacticT $ lift $ lift m
 
-instance (MonadProvable jdg m, MonadState s m) => MonadState s (TacticT jdg ext err m) where
-  get = lift get
-  put = lift . put
+instance (MonadProvable jdg m) => MonadState s (TacticT jdg ext err s m) where
+    state f = tactic $ \j -> fmap (,j) $ state f
 
 -- | A @'RuleT'@ is a monad transformer for creating inference rules.
-newtype RuleT jdg ext err m a = RuleT
-  { unRuleT :: ProofStateT ext a err m jdg
+newtype RuleT jdg ext err s m a = RuleT
+  { unRuleT :: ProofStateT ext a err s m jdg
   }
   deriving stock Generic
 
-instance (Show jdg, Show err, Show a, Show (m (ProofStateT ext a err m jdg))) => Show (RuleT jdg ext err m a) where
+instance (Show jdg, Show err, Show a, Show (m (ProofStateT ext a err s m jdg))) => Show (RuleT jdg ext err s m a) where
   show = show . unRuleT
 
-instance Functor m => Functor (RuleT jdg ext err m) where
+instance Functor m => Functor (RuleT jdg ext err s m) where
   fmap = coerce mapExtract'
 
-instance Monad m => Applicative (RuleT jdg ext err m) where
+instance Monad m => Applicative (RuleT jdg ext err s m) where
   pure = return
   (<*>) = ap
 
-instance Monad m => Monad (RuleT jdg ext err m) where
+instance Monad m => Monad (RuleT jdg ext err s m) where
   return = coerce . Axiom
   RuleT (Subgoal goal k)   >>= f = coerce $ Subgoal goal $ fmap (bindAlaCoerce f) k
   RuleT (Effect m)         >>= f = coerce $ Effect $ fmap (bindAlaCoerce f) m
+  RuleT (Stateful s)       >>= f = coerce $ Stateful $ fmap (bindAlaCoerce f) . s
   RuleT (Alt p1 p2)        >>= f = coerce $ Alt (bindAlaCoerce f p1) (bindAlaCoerce f p2)
   RuleT (Interleave p1 p2) >>= f = coerce $ Interleave (bindAlaCoerce f p1) (bindAlaCoerce f p2)
   RuleT Empty              >>= _ = coerce $ Empty
@@ -133,21 +133,21 @@ bindAlaCoerce
      (a2 -> m b) -> a1 -> c
 bindAlaCoerce f = coerce . (f =<<) . coerce
 
-instance MonadTrans (RuleT jdg ext err) where
+instance MonadTrans (RuleT jdg ext err s) where
   lift = coerce . Effect . fmap Axiom
 
-instance MFunctor (RuleT jdg ext err) where
+instance MFunctor (RuleT jdg ext err s) where
   hoist nat = hoist nat . coerce
 
-instance MonadIO m => MonadIO (RuleT jdg ext err m) where
+instance MonadIO m => MonadIO (RuleT jdg ext err s m) where
   liftIO = lift . liftIO
 
-instance Monad m => MonadError err (RuleT jdg ext err m) where
+instance Monad m => MonadError err (RuleT jdg ext err s m) where
   throwError = coerce . Failure
   catchError r h = coerce $ flip catchError h $ coerce r
 
 -- -- | Map the unwrapped computation using the given function
--- mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext err m a -> RuleT jdg ext err m b
+-- mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext err s m a -> RuleT jdg ext err s m b
 -- mapRuleT f (RuleT m) = RuleT $ _
 
 class (Monad m) => MonadRule jdg ext m | m -> jdg, m -> ext where
@@ -156,7 +156,7 @@ class (Monad m) => MonadRule jdg ext m | m -> jdg, m -> ext where
   default subgoal :: (MonadTrans t, MonadRule jdg ext m1, m ~ t m1) => jdg -> m ext
   subgoal = lift . subgoal
 
-instance (Monad m) => MonadRule jdg ext (RuleT jdg ext err m) where
+instance (Monad m) => MonadRule jdg ext (RuleT jdg ext err s m) where
   subgoal j = RuleT $ Subgoal j Axiom
 
 instance (MonadRule jdg ext m) => MonadRule jdg ext (ReaderT env m)
@@ -170,7 +170,7 @@ class (Monad m) => MonadProvable jdg m | m -> jdg where
   default proving :: (MonadTrans t, MonadProvable jdg m1, m ~ t m1) => jdg -> m jdg
   proving = lift . proving
 
-instance (MonadProvable jdg m) => MonadProvable jdg (ProofStateT ext ext err m)
+instance (MonadProvable jdg m) => MonadProvable jdg (ProofStateT ext ext err s m)
 instance (MonadProvable jdg m) => MonadProvable jdg (ReaderT r m)
 instance (MonadProvable jdg m) => MonadProvable jdg (StateT s m)
 instance (MonadProvable jdg m) => MonadProvable jdg (ExceptT err m)
