@@ -128,6 +128,11 @@ instance Monad m => Monad (RuleT jdg ext err s m) where
   RuleT (Failure err)      >>= _ = coerce $ Failure err
   RuleT (Axiom e)          >>= f = f e
 
+instance Monad m => MonadState s (RuleT jdg ext err s m) where
+    state f = RuleT $ Stateful $ \s ->
+        let (a, s') = f s
+        in (s', Axiom a)
+
 bindAlaCoerce
   :: (Monad m, Coercible c (m b), Coercible a1 (m a2)) =>
      (a2 -> m b) -> a1 -> c
