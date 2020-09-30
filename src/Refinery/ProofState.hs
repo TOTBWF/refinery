@@ -1,5 +1,6 @@
-{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
+
+{-# LANGUAGE TupleSections          #-}
 {-# LANGUAGE DefaultSignatures      #-}
 {-# LANGUAGE DeriveGeneric          #-}
 {-# LANGUAGE DerivingStrategies     #-}
@@ -10,7 +11,6 @@
 {-# LANGUAGE MultiParamTypeClasses  #-}
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
-
 {-# LANGUAGE UndecidableInstances   #-}
 
 -----------------------------------------------------------------------------
@@ -22,16 +22,14 @@
 --
 --
 module Refinery.ProofState
-  -- ( ProofStateT ext'(..)
-  -- , axiom
-  -- , mapExtract
-  -- )
 where
 
 import           Control.Applicative
 import           Control.Monad
 import           Control.Monad.Catch hiding (handle)
 import           Control.Monad.Except
+import qualified Control.Monad.Writer.Lazy as LW
+import qualified Control.Monad.Writer.Strict as SW
 import           Control.Monad.State
 import           Control.Monad.Logic
 import           Control.Monad.Morph
@@ -39,10 +37,6 @@ import           Control.Monad.Reader
 
 import           GHC.Generics
 
--- import Pipes.Core
--- import Pipes.Internal
-
--- newtype ProofStateT ext' ext m jdg = ProofStateT ext' { unProofStateT ext' :: Client jdg ext m ext }
 data ProofStateT ext' ext err s m goal
     = Subgoal goal (ext' -> ProofStateT ext' ext err s m goal)
     | Effect (m (ProofStateT ext' ext err s m goal))
@@ -74,7 +68,6 @@ instance Functor m => Functor (ProofStateT ext' ext err s m) where
     fmap _ (Failure err) = Failure err
     fmap _ (Axiom ext) = Axiom ext
 
--- TODO Do this right pls
 instance Functor m => Applicative (ProofStateT ext ext err s m) where
     pure = return
     (<*>) = ap
@@ -132,9 +125,10 @@ class (Monad m) => MonadExtract ext m | m -> ext where
   default hole :: (MonadTrans t, MonadExtract ext m1, m ~ t m1) => m ext
   hole = lift hole
 
--- TODO [Reed] Add the rest of the instances
 instance (MonadExtract ext m) => MonadExtract ext (ReaderT r m)
 instance (MonadExtract ext m) => MonadExtract ext (StateT s m)
+instance (MonadExtract ext m, Monoid w) => MonadExtract ext (LW.WriterT w m)
+instance (MonadExtract ext m, Monoid w) => MonadExtract ext (SW.WriterT w m)
 instance (MonadExtract ext m) => MonadExtract ext (ExceptT err m)
 
 proofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [Either err (ext, [goal])]
@@ -142,7 +136,6 @@ proofs s p = go s [] p
     where
       go s goals (Subgoal goal k) = do
          h <- hole
-         -- TODO [Reed] Use a dlist
          (go s (goals ++ [goal]) $ k h)
       go s goals (Effect m) = go s goals =<< m
       go s goals (Stateful f) =
@@ -175,7 +168,6 @@ instance (MonadCatch m) => MonadCatch (ProofStateT ext ext err s m) where
     catch Empty _ = Empty
     catch (Failure err) _ = Failure err
     catch (Axiom e) _ = (Axiom e)
-
 
 instance (Monad m) => MonadError err (ProofStateT ext ext err s m) where
     throwError = Failure
@@ -217,8 +209,6 @@ subgoals fs (Interleave p1 p2) = Interleave (subgoals fs p1) (subgoals fs p2)
 subgoals _ (Failure err) = Failure err
 subgoals _ Empty = Empty
 subgoals _ (Axiom ext) = Axiom ext
-
--- interleave :: ProofStateT ext' ext err s m jdg
 
 mapExtract :: (Functor m) => (ext -> ext') -> (ext' -> ext) -> ProofStateT ext ext err s m jdg -> ProofStateT ext' ext' err s m jdg
 mapExtract into out = \case

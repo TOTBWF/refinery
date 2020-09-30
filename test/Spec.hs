@@ -62,9 +62,6 @@ instance ( Show jdg
 instance MonadExtract Int Identity where
   hole = pure 0
 
-instance MonadProvable (Sum Int) Identity where
-  proving = pure
-
 instance ( CoArbitrary ext'
          , Arbitrary ext
          , Arbitrary err
@@ -170,8 +167,7 @@ rightAltBind m1 m2 m3 =
 interleaveMZero
     :: forall m a jdg ext err s
      . (MonadExtract ext m, EqProp (m [Either err (ext, [jdg])]),
-      Show jdg, Show s, Arbitrary jdg, Arbitrary s,
-      MonadProvable jdg m)
+      Show jdg, Show s, Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> TacticT jdg ext err s m a
     -> Property
@@ -181,8 +177,7 @@ interleaveMZero _ m =
 interleaveMPlus
     :: forall m a jdg ext err s
      . (MonadExtract ext m, EqProp (m [Either err (ext, [jdg])]),
-      Show jdg, Show s, Arbitrary jdg, Arbitrary s,
-      MonadProvable jdg m)
+      Show jdg, Show s, Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> a
     -> TacticT jdg ext err s m a

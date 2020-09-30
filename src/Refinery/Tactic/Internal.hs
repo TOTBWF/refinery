@@ -30,10 +30,6 @@ module Refinery.Tactic.Internal
   , mapTacticT
   , MonadRule(..)
   , RuleT(..)
-  , MonadProvable(..)
-  , ProvableT(..)
-  , Provable
-  , runProvable
   )
 where
 
@@ -57,11 +53,15 @@ import Refinery.ProofState
 --
 -- * @jdg@ - The goal type. This is the thing we are trying to construct a proof of.
 -- * @ext@ - The extract type. This is what we will recieve after running the tactic.
--- * @m@ - The base monad.
--- * @a@ - The return value. This to make @'TacticT'@ a monad, and will always be @'()'@
+-- * @err@ - The error type. We can use 'throwError' to abort the computation with a provided error
+-- * @s@   - The state type.
+-- * @m@   - The base monad.
+-- * @a@   - The return value. This to make @'TacticT'@ a monad, and will always be @'()'@
 newtype TacticT jdg ext err s m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext ext err s m) a }
   deriving ( Functor
+           , Applicative
            , Alternative
+           , Monad
            , MonadPlus
            , MonadReader env
            , MonadError err
@@ -78,18 +78,9 @@ instance (Monoid jdg, Show a, Show jdg, Show err, Show ext, Show (m (ProofStateT
 tactic :: (jdg -> ProofStateT ext ext err s m (a, jdg)) -> TacticT jdg ext err s m a
 tactic t = TacticT $ StateT t
 
+-- |  Helper function for deconstructing a tactic.
 proofState :: TacticT jdg ext err s m a -> jdg -> ProofStateT ext ext err s m (a, jdg)
 proofState t j = runStateT (unTacticT t) j
-
-instance (MonadProvable jdg m) => Applicative (TacticT jdg ext err s m) where
-  pure a = TacticT $ StateT $ proving >=> \j -> pure (a, j)
-  (<*>) = ap
-
-instance (MonadProvable jdg m) => Monad (TacticT jdg ext err s m) where
-  return = pure
-  t >>= k = TacticT $ StateT $ proving >=> \j -> do
-    (a, j') <- runStateT (unTacticT t) j
-    runStateT (unTacticT $ k a) =<< proving j'
 
 -- | Map the unwrapped computation using the given function
 mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext err s m a -> TacticT jdg ext err s m b
@@ -98,7 +89,7 @@ mapTacticT f (TacticT m) = TacticT $ m >>= (lift . lift . f . return)
 instance MonadTrans (TacticT jdg ext err s) where
   lift m = TacticT $ lift $ lift m
 
-instance (MonadProvable jdg m) => MonadState s (TacticT jdg ext err s m) where
+instance (Monad m) => MonadState s (TacticT jdg ext err s m) where
     state f = tactic $ \j -> fmap (,j) $ state f
 
 -- | A @'RuleT'@ is a monad transformer for creating inference rules.
@@ -133,10 +124,26 @@ instance Monad m => MonadState s (RuleT jdg ext err s m) where
         let (a, s') = f s
         in (s', Axiom a)
 
+instance MonadReader r m => MonadReader r (RuleT jdg ext err s m) where
+    ask = lift ask
+    local f (RuleT (Subgoal goal k))   = coerce $ Subgoal goal (localAlaCoerce f . k)
+    local f (RuleT (Effect m))         = coerce $ Effect (local f m)
+    local f (RuleT (Stateful s))       = coerce $ Stateful (fmap (localAlaCoerce f) . s)
+    local f (RuleT (Alt p1 p2))        = coerce $ Alt (localAlaCoerce f p1) (localAlaCoerce f p2)
+    local f (RuleT (Interleave p1 p2)) = coerce $ Interleave (localAlaCoerce f p1) (localAlaCoerce f p2)
+    local _ (RuleT Empty)              = coerce $ Empty
+    local _ (RuleT (Failure err))      = coerce $ Failure err
+    local _ (RuleT (Axiom e))          = coerce $ Axiom e
+
 bindAlaCoerce
   :: (Monad m, Coercible c (m b), Coercible a1 (m a2)) =>
      (a2 -> m b) -> a1 -> c
 bindAlaCoerce f = coerce . (f =<<) . coerce
+
+localAlaCoerce
+  :: (MonadReader r m) =>
+     (r -> r) -> ProofStateT ext a err s m jdg -> ProofStateT ext a err s m jdg
+localAlaCoerce f = coerce . local f . RuleT
 
 instance MonadTrans (RuleT jdg ext err s) where
   lift = coerce . Effect . fmap Axiom
@@ -151,10 +158,6 @@ instance Monad m => MonadError err (RuleT jdg ext err s m) where
   throwError = coerce . Failure
   catchError r h = coerce $ flip catchError h $ coerce r
 
--- -- | Map the unwrapped computation using the given function
--- mapRuleT :: (Monad m) => (m a -> m b) -> RuleT jdg ext err s m a -> RuleT jdg ext err s m b
--- mapRuleT f (RuleT m) = RuleT $ _
-
 class (Monad m) => MonadRule jdg ext m | m -> jdg, m -> ext where
   -- | Create a subgoal, and return the resulting extract.
   subgoal :: jdg -> m ext
@@ -167,29 +170,3 @@ instance (Monad m) => MonadRule jdg ext (RuleT jdg ext err s m) where
 instance (MonadRule jdg ext m) => MonadRule jdg ext (ReaderT env m)
 instance (MonadRule jdg ext m) => MonadRule jdg ext (StateT env m)
 instance (MonadRule jdg ext m) => MonadRule jdg ext (ExceptT env m)
-instance (MonadRule jdg ext m) => MonadRule jdg ext (ProvableT env m)
-
-class (Monad m) => MonadProvable jdg m | m -> jdg where
-  -- | Applies a transformation of goals at every step of the tactic.
-  proving :: jdg -> m jdg
-  default proving :: (MonadTrans t, MonadProvable jdg m1, m ~ t m1) => jdg -> m jdg
-  proving = lift . proving
-
-instance (MonadProvable jdg m) => MonadProvable jdg (ProofStateT ext ext err s m)
-instance (MonadProvable jdg m) => MonadProvable jdg (ReaderT r m)
-instance (MonadProvable jdg m) => MonadProvable jdg (StateT s m)
-instance (MonadProvable jdg m) => MonadProvable jdg (ExceptT err m)
-instance (Monad m) => MonadProvable jdg (ProvableT jdg m) where
-  proving = pure
-
--- | Helper newtype for when you don't have any need for the mechanisms of MonadProvable.
-newtype ProvableT jdg m a = ProvableT { runProvableT :: m a }
-  deriving (Functor, Applicative, Monad, MonadIO, MonadState s, MonadError err)
-
-type Provable jdg a = ProvableT jdg Identity a
-
-instance MonadTrans (ProvableT jdg) where
-  lift = ProvableT
-
-runProvable :: Provable jdg a -> a
-runProvable = runIdentity . runProvableT
