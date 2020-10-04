@@ -156,7 +156,7 @@ instance MonadIO m => MonadIO (RuleT jdg ext err s m) where
 
 instance Monad m => MonadError err (RuleT jdg ext err s m) where
   throwError = coerce . Failure
-  catchError r h = coerce $ flip catchError h $ coerce r
+  catchError = error "it's bottom, you fool"
 
 class (Monad m) => MonadRule jdg ext m | m -> jdg, m -> ext where
   -- | Create a subgoal, and return the resulting extract.

@@ -78,6 +78,7 @@ instance ( CoArbitrary ext'
       , Effect  <$> arbitrary
       , Alt     <$> decayArbitrary 2 <*> decayArbitrary 2
       , Stateful <$> arbitrary
+      , Interleave <$> decayArbitrary 2 <*> decayArbitrary 2
       ] ++ small
     where
       small =
@@ -132,11 +133,15 @@ main = hspec $ do
     testBatch $ monad       (undefined :: ProofStateTest (Int, Int, Int))
     testBatch $ monadPlus   (undefined :: ProofStateTest (Int, Int))
     testBatch $ monadState  (undefined :: ProofStateTest (Int, Int))
+    testBatch $ monadError  (undefined :: ProofStateTest Int)
     it "distrib put over <|>" $ property $ distribPut (undefined :: ProofStateTest (Int))
+    it "catchError (a <|> throw e) h = h e" $
+      property $ catchAlt (undefined :: ProofStateTest Int)
   describe "RuleT" $ do
     testBatch $ functor     (undefined :: RuleTest (Int, Int, Int))
     testBatch $ applicative (undefined :: RuleTest (Int, Int, Int))
     testBatch $ monad       (undefined :: RuleTest (Int, Int, Int))
+    -- testBatch $ monadError  (undefined :: RuleTest Int)
   describe "TacticT" $ do
     testBatch $ functor     (undefined :: TacticTest ((), (), ()))
     testBatch $ applicative (undefined :: TacticTest ((), (), ()))
@@ -144,9 +149,12 @@ main = hspec $ do
     testBatch $ monad       (undefined :: TacticTest ((), (), ()))
     testBatch $ monadPlus   (undefined :: TacticTest ((), ()))
     testBatch $ monadState  (undefined :: TacticTest ((), ()))
+    testBatch $ monadError  (undefined :: TacticTest Int)
     it "interleave - mzero" $ property $ interleaveMZero (undefined :: TacticTest Int)
     it "interleave - mplus" $ property $ interleaveMPlus (undefined :: TacticTest Int)
     it "distrib put over <|>" $ property $ distribPut (undefined :: TacticTest ())
+    it "catchError (a <|> throw e) h = h e" $
+      property $ catchAlt (undefined :: TacticTest Int)
 
 leftAltBind
     :: forall m a b
@@ -206,4 +214,5 @@ distribPut _ = property $ do
     counterexample (show m1) $
     counterexample (show m2) $
       (put s >> (m1 <|> m2)) =-= ((put s >> m1) <|> (put s >> m2))
+
 
