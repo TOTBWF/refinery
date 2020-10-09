@@ -86,8 +86,12 @@ proofState t j = runStateT (unTacticT t) j
 mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext err s m a -> TacticT jdg ext err s m b
 mapTacticT f (TacticT m) = TacticT $ m >>= (lift . lift . f . return)
 
+instance MFunctor (TacticT jdg ext err s) where
+  hoist f = TacticT . (hoist (hoist f)) . unTacticT
+
 instance MonadTrans (TacticT jdg ext err s) where
   lift m = TacticT $ lift $ lift m
+
 
 instance (Monad m) => MonadState s (TacticT jdg ext err s m) where
     state f = tactic $ \j -> fmap (,j) $ state f
@@ -115,6 +119,7 @@ instance Monad m => Monad (RuleT jdg ext err s m) where
   RuleT (Stateful s)       >>= f = coerce $ Stateful $ fmap (bindAlaCoerce f) . s
   RuleT (Alt p1 p2)        >>= f = coerce $ Alt (bindAlaCoerce f p1) (bindAlaCoerce f p2)
   RuleT (Interleave p1 p2) >>= f = coerce $ Interleave (bindAlaCoerce f p1) (bindAlaCoerce f p2)
+  RuleT (Commit p1 p2) >>= f = coerce $ Commit (bindAlaCoerce f p1) (bindAlaCoerce f p2)
   RuleT Empty              >>= _ = coerce $ Empty
   RuleT (Failure err)      >>= _ = coerce $ Failure err
   RuleT (Axiom e)          >>= f = f e
@@ -131,6 +136,7 @@ instance MonadReader r m => MonadReader r (RuleT jdg ext err s m) where
     local f (RuleT (Stateful s))       = coerce $ Stateful (fmap (localAlaCoerce f) . s)
     local f (RuleT (Alt p1 p2))        = coerce $ Alt (localAlaCoerce f p1) (localAlaCoerce f p2)
     local f (RuleT (Interleave p1 p2)) = coerce $ Interleave (localAlaCoerce f p1) (localAlaCoerce f p2)
+    local f (RuleT (Commit p1 p2)) = coerce $ Commit (localAlaCoerce f p1) (localAlaCoerce f p2)
     local _ (RuleT Empty)              = coerce $ Empty
     local _ (RuleT (Failure err))      = coerce $ Failure err
     local _ (RuleT (Axiom e))          = coerce $ Axiom e
