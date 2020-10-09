@@ -147,6 +147,8 @@ main = hspec $ do
     it "interleave - mzero" $ property $ interleaveMZero (undefined :: TacticTest Int)
     it "interleave - mplus" $ property $ interleaveMPlus (undefined :: TacticTest Int)
     it "distrib put over <|>" $ property $ distribPut (undefined :: TacticTest ())
+    it "pure absorption on commit" $ property $ absorptionPureCommit (undefined :: TacticTest Int)
+    it "empty identity on commit" $ property $ emptyIdentityCommit (undefined :: TacticTest Int)
 
 leftAltBind
     :: forall m a b
@@ -207,3 +209,23 @@ distribPut _ = property $ do
     counterexample (show m2) $
       (put s >> (m1 <|> m2)) =-= ((put s >> m1) <|> (put s >> m2))
 
+absorptionPureCommit
+    :: forall m a jdg ext err s
+     . (MonadExtract ext m, EqProp (m [Either err (ext, [jdg])]),
+      Show jdg, Show s, Arbitrary jdg, Arbitrary s)
+    => TacticT jdg ext err s m a  -- ^ proxy
+    -> a
+    -> TacticT jdg ext err s m a
+    -> Property
+absorptionPureCommit _ a t =
+    (commit (pure a) t) =-= pure a
+
+emptyIdentityCommit
+    :: forall m a jdg ext err s
+     . (MonadExtract ext m, EqProp (m [Either err (ext, [jdg])]),
+      Show jdg, Show s, Arbitrary jdg, Arbitrary s)
+    => TacticT jdg ext err s m a  -- ^ proxy
+    -> TacticT jdg ext err s m a
+    -> Property
+emptyIdentityCommit _ t =
+    (commit empty t) =-= t

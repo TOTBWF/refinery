@@ -6,6 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE UndecidableInstances #-}
 -----------------------------------------------------------------------------
@@ -20,6 +21,7 @@ module Refinery.Tactic
   -- * Tactic Combinators
   , (<@>)
   , (<%>)
+  , commit
   , try
   , many_
   , choice
@@ -43,11 +45,11 @@ import Control.Monad.Logic
 import Refinery.ProofState
 import Refinery.Tactic.Internal
 
--- -- | Create a tactic that applies each of the tactics in the list to one subgoal.
--- --
--- -- When the number of subgoals is greater than the number of provided tactics,
--- -- the identity tactic is applied to the remainder. When the number of subgoals is
--- -- less than the number of provided tactics, the remaining tactics are ignored.
+-- | Create a tactic that applies each of the tactics in the list to one subgoal.
+--
+-- When the number of subgoals is greater than the number of provided tactics,
+-- the identity tactic is applied to the remainder. When the number of subgoals is
+-- less than the number of provided tactics, the remaining tactics are ignored.
 (<@>) :: (Functor m) => TacticT jdg ext err s m a -> [TacticT jdg ext err s m a] -> TacticT jdg ext err s m a
 t <@> ts = tactic $ \j -> subgoals (fmap (\t' (_,j') -> proofState t' j') ts) (proofState t j)
 
@@ -56,6 +58,8 @@ infixr 3 <%>
 (<%>) :: TacticT jdg ext err s m a -> TacticT jdg ext err s m a -> TacticT jdg ext err s m a
 t1 <%> t2 = tactic $ \j -> Interleave (proofState t1 j) (proofState t2 j)
 
+commit :: TacticT jdg ext err s m a -> TacticT jdg ext err s m a -> TacticT jdg ext err s m a
+commit t1 t2 = tactic $ \j -> Commit (proofState t1 j) (proofState t2 j)
 
 -- | Tries to run a tactic, backtracking on failure
 try :: (Monad m) => TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
