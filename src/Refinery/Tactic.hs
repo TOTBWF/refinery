@@ -55,9 +55,13 @@ t <@> ts = tactic $ \j -> subgoals (fmap (\t' (_,j') -> proofState t' j') ts) (p
 
 infixr 3 <%>
 
+-- | @t1 <%> t2@ will interleave the execution of @t1@ and @t2@. This is useful if @t1@ will
+-- produce an infinite number of extracts, as we will still run @t2@. This is contrasted with
+-- @t1 <|> t2@, which will not ever consider @t2@ if @t1@ produces an infinite number of extracts.
 (<%>) :: TacticT jdg ext err s m a -> TacticT jdg ext err s m a -> TacticT jdg ext err s m a
 t1 <%> t2 = tactic $ \j -> Interleave (proofState t1 j) (proofState t2 j)
 
+-- | @commit t1 t2@ will run @t1@, and then only run @t2@ if @t1@ failed to produce any extracts.
 commit :: TacticT jdg ext err s m a -> TacticT jdg ext err s m a -> TacticT jdg ext err s m a
 commit t1 t2 = tactic $ \j -> Commit (proofState t1 j) (proofState t2 j)
 
