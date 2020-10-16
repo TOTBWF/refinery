@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 {-# LANGUAGE TupleSections          #-}
@@ -34,6 +35,7 @@ import           Control.Monad.State
 import           Control.Monad.Logic
 import           Control.Monad.Morph
 import           Control.Monad.Reader
+import           Data.Either
 
 import           GHC.Generics
 
@@ -137,7 +139,7 @@ instance (MonadExtract ext m, Monoid w) => MonadExtract ext (LW.WriterT w m)
 instance (MonadExtract ext m, Monoid w) => MonadExtract ext (SW.WriterT w m)
 instance (MonadExtract ext m) => MonadExtract ext (ExceptT err m)
 
-proofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [Either err (ext, [goal])]
+proofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [Either err (ext, s, [goal])]
 proofs s p = go s [] p
     where
       go s goals (Subgoal goal k) = do
@@ -150,11 +152,11 @@ proofs s p = go s [] p
       go s goals (Alt p1 p2) = liftA2 (<>) (go s goals p1) (go s goals p2)
       go s goals (Interleave p1 p2) = liftA2 (interleave) (go s goals p1) (go s goals p2)
       go s goals (Commit p1 p2) = go s goals p1 >>= \case
-          [] -> go s goals p2
+          (rights -> []) -> go s goals p2
           solns -> pure solns
       go _ _ Empty = pure []
       go _ _ (Failure err) = pure [throwError err]
-      go _ goals (Axiom ext) = pure [Right (ext, goals)]
+      go s goals (Axiom ext) = pure [Right (ext, s, goals)]
 
 accumEither :: (Semigroup a, Semigroup b) => Either a b -> Either a b -> Either a b
 accumEither (Left a1) (Left a2)   = Left (a1 <> a2)
@@ -234,19 +236,6 @@ mapExtract into out = \case
     Empty -> Empty
     Failure err -> Failure err
     Axiom ext -> Axiom $ into ext
-
-annotate :: (Functor m) => ([ext'] -> ext -> ext') -> (ext' -> ext) -> ProofStateT ext ext err s m jdg -> ProofStateT ext' ext' err s m jdg
-annotate ann out = go []
-    where
-      go exts (Subgoal goal k) = Subgoal goal (\ext -> go (exts ++ [ext]) $ (k $ out ext))
-      go exts (Effect m) = Effect (fmap (go exts) m)
-      go exts (Stateful s) = Stateful (fmap (go exts) . s)
-      go exts (Alt t1 t2) = Alt (go exts t1) (go exts t2)
-      go exts (Interleave t1 t2) = Interleave (go exts t1) (go exts t2)
-      go exts (Commit t1 t2) = Commit (go exts t1) (go exts t2)
-      go _ Empty = Empty
-      go _ (Failure err) = Failure err
-      go exts (Axiom ext) = Axiom $ ann exts ext
 
 mapExtract' :: Functor m => (a -> b) -> ProofStateT ext' a err s m jdg -> ProofStateT ext' b err s m jdg
 mapExtract' into = \case

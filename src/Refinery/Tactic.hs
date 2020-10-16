@@ -26,7 +26,9 @@ module Refinery.Tactic
   , many_
   , choice
   , progress
-  , MonadLogic(..)
+  , gather
+  , pruning
+  , ensure
   -- * Subgoal Manipulation
   , goal
   , focus
@@ -40,7 +42,6 @@ module Refinery.Tactic
 import Control.Applicative
 import Control.Monad.Except
 import Control.Monad.State.Strict
-import Control.Monad.Logic
 
 import Refinery.ProofState
 import Refinery.Tactic.Internal
@@ -77,13 +78,15 @@ many_ t = try (t >> many_ t)
 goal :: (Functor m) => TacticT jdg ext err s m jdg
 goal = TacticT $ get
 
+-- | @choice ts@ will run all of the tactics in the list against the current subgoals,
+-- and interleave their extracts in a manner similar to '<%>'.
 choice :: (Monad m) => [TacticT jdg ext err s m a] -> TacticT jdg ext err s m a
 choice [] = empty
 choice (t:ts) = t <%> choice ts
 
--- -- | @progress eq err t@ applies the tactic @t@, and checks to see if the
--- -- resulting subgoals are all equal to the initial goal by using @eq@. If they
--- -- are, it throws @err@.
+-- | @progress eq err t@ applies the tactic @t@, and checks to see if the
+-- resulting subgoals are all equal to the initial goal by using @eq@. If they
+-- are, it throws @err@.
 progress :: (Monad m) => (jdg -> jdg -> Bool) -> err ->  TacticT jdg ext err s m a -> TacticT jdg ext err s m a
 progress eq err t = do
   j <- goal
@@ -91,12 +94,46 @@ progress eq err t = do
   j' <- goal
   if j `eq` j' then pure a else throwError err
 
--- -- | Apply the first tactic, and then apply the second tactic focused on the @n@th subgoal.
+-- | @gather t f@ runs the tactic @t@, then runs @f@ with all of the generated subgoals to determine
+-- the next tactic to run.
+gather :: (MonadExtract ext m) => TacticT jdg ext err s m a -> ([(a, jdg)] -> TacticT jdg ext err s m a) -> TacticT jdg ext err s m a
+gather t f = tactic $ \j -> do
+    s <- get
+    results <- lift $ proofs s $ proofState t j
+    msum $ flip fmap results $ \case
+        Left err -> throwError err
+        Right (_, _, jdgs) -> proofState (f jdgs) j
+
+-- | @pruning t f@ runs the tactic @t@, and then applies a predicate to all of the generated subgoals.
+pruning
+    :: (MonadExtract ext m)
+    => TacticT jdg ext err s m ()
+    -> ([jdg] -> Maybe err)
+    -> TacticT jdg ext err s m ()
+pruning t p = gather t $ maybe t throwError . p . fmap snd
+
+-- | @filterT p f t@ runs the tactic @t@, and applies a predicate to the state after the execution of @t@. We also run
+-- a "cleanup" function @f@. Note that the predicate is applied to the state _before_ the cleanup function is run.
+ensure :: (Monad m) => (s -> Maybe err) -> (s -> s) -> TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
+ensure p f t = check >> t
+    where
+      -- NOTE It may seem backwards to run check _before_ t, but we
+      -- need to do the predicate check after the subgoal has been resolved,
+      -- and not on every generated subgoal.
+      check = rule $ \j -> do
+          e <- subgoal j
+          s <- get
+          modify f
+          case p s of
+            Just err -> throwError err
+            Nothing -> pure e
+
+-- | Apply the first tactic, and then apply the second tactic focused on the @n@th subgoal.
 focus :: (Functor m) => TacticT jdg ext err s m () -> Int -> TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
 focus t n t' = t <@> (replicate n (pure ()) ++ [t'] ++ repeat (pure ()))
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
-runTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [Either err (ext, [jdg])]
+runTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [Either err (ext, s, [jdg])]
 runTacticT t j s = proofs s $ fmap snd $ proofState t j
 
 -- | Turn an inference rule into a tactic.
