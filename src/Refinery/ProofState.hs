@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 {-# LANGUAGE TupleSections          #-}
@@ -34,6 +35,7 @@ import           Control.Monad.State
 import           Control.Monad.Logic
 import           Control.Monad.Morph
 import           Control.Monad.Reader
+import           Data.Either
 
 import           GHC.Generics
 
@@ -137,7 +139,7 @@ instance (MonadExtract ext m, Monoid w) => MonadExtract ext (LW.WriterT w m)
 instance (MonadExtract ext m, Monoid w) => MonadExtract ext (SW.WriterT w m)
 instance (MonadExtract ext m) => MonadExtract ext (ExceptT err m)
 
-proofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [Either err (ext, [goal])]
+proofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [Either err (ext, s, [goal])]
 proofs s p = go s [] p
     where
       go s goals (Subgoal goal k) = do
@@ -154,7 +156,7 @@ proofs s p = go s [] p
           solns -> pure solns
       go _ _ Empty = pure []
       go _ _ (Failure err) = pure [throwError err]
-      go _ goals (Axiom ext) = pure [Right (ext, goals)]
+      go s goals (Axiom ext) = pure [Right (ext, s, goals)]
 
 accumEither :: (Semigroup a, Semigroup b) => Either a b -> Either a b -> Either a b
 accumEither (Left a1) (Left a2)   = Left (a1 <> a2)

@@ -16,6 +16,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.State.Strict (StateT (..))
 import Control.Monad.State.Class
+import Control.Monad.Error.Class
 import Data.Function
 import Data.Functor.Identity
 import Data.Monoid (Sum (..))
@@ -33,7 +34,7 @@ testBatch (batchName, tests) = describe ("laws for: " ++ batchName) $
   foldr (>>) (return ()) (map (uncurry it) tests)
 
 
-instance (MonadExtract ext m, EqProp (m [Either err (ext, [a])]), Arbitrary s)
+instance (MonadExtract ext m, EqProp (m [Either err (ext, s, [a])]), Arbitrary s)
       => EqProp (ProofStateT ext ext err s m a) where
   (=-=) a b = property $ do
     s <- arbitrary
@@ -42,7 +43,7 @@ instance (MonadExtract ext m, EqProp (m [Either err (ext, [a])]), Arbitrary s)
 instance ( Show jdg
          , MonadExtract ext m
          , Arbitrary jdg
-         , EqProp (m [Either err (ext, [jdg])])
+         , EqProp (m [Either err (ext, s, [jdg])])
          , Show s
          , Arbitrary s
          )
@@ -51,7 +52,7 @@ instance ( Show jdg
 
 instance ( Show jdg
          , Arbitrary jdg
-         , EqProp (m [Either err (ext, [jdg])])
+         , EqProp (m [Either err (ext, s, [jdg])])
          , MonadExtract ext m
          , Show s
          , Arbitrary s
@@ -149,6 +150,7 @@ main = hspec $ do
     it "distrib put over <|>" $ property $ distribPut (undefined :: TacticTest ())
     it "pure absorption on commit" $ property $ absorptionPureCommit (undefined :: TacticTest Int)
     it "empty identity on commit" $ property $ emptyIdentityCommit (undefined :: TacticTest Int)
+    it "failure identity on commit" $ property $ emptyIdentityCommit (undefined :: TacticTest Int)
 
 leftAltBind
     :: forall m a b
@@ -168,7 +170,7 @@ rightAltBind m1 m2 m3 =
 
 interleaveMZero
     :: forall m a jdg ext err s
-     . (MonadExtract ext m, EqProp (m [Either err (ext, [jdg])]),
+     . (MonadExtract ext m, EqProp (m [Either err (ext, s, [jdg])]),
       Show jdg, Show s, Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> TacticT jdg ext err s m a
@@ -178,7 +180,7 @@ interleaveMZero _ m =
 
 interleaveMPlus
     :: forall m a jdg ext err s
-     . (MonadExtract ext m, EqProp (m [Either err (ext, [jdg])]),
+     . (MonadExtract ext m, EqProp (m [Either err (ext, s, [jdg])]),
       Show jdg, Show s, Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> a
@@ -211,7 +213,7 @@ distribPut _ = property $ do
 
 absorptionPureCommit
     :: forall m a jdg ext err s
-     . (MonadExtract ext m, EqProp (m [Either err (ext, [jdg])]),
+     . (MonadExtract ext m, EqProp (m [Either err (ext, s, [jdg])]),
       Show jdg, Show s, Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> a
@@ -222,10 +224,21 @@ absorptionPureCommit _ a t =
 
 emptyIdentityCommit
     :: forall m a jdg ext err s
-     . (MonadExtract ext m, EqProp (m [Either err (ext, [jdg])]),
+     . (MonadExtract ext m, EqProp (m [Either err (ext, s, [jdg])]),
       Show jdg, Show s, Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> TacticT jdg ext err s m a
     -> Property
 emptyIdentityCommit _ t =
     (commit empty t) =-= t
+
+failureIdentityCommit
+    :: forall m a jdg ext err s
+     . (MonadExtract ext m, EqProp (m [Either err (ext, s, [jdg])]),
+      Show jdg, Show s, Arbitrary jdg, Arbitrary s)
+    => TacticT jdg ext err s m a  -- ^ proxy
+    -> err
+    -> TacticT jdg ext err s m a
+    -> Property
+failureIdentityCommit _ e t =
+    (commit (throwError e) t) =-= t

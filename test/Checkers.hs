@@ -34,7 +34,7 @@ monadState _ =
         s <- arbitrary
         pure $
           counterexample (show s) $
-            (put s >> get) =-= pure @m s
+            (put s >> get) =-= (put s >> pure @m s)
       )
     ]
   )
