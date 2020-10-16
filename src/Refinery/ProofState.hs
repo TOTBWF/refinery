@@ -237,19 +237,6 @@ mapExtract into out = \case
     Failure err -> Failure err
     Axiom ext -> Axiom $ into ext
 
-annotate :: (Functor m) => ([ext'] -> ext -> ext') -> (ext' -> ext) -> ProofStateT ext ext err s m jdg -> ProofStateT ext' ext' err s m jdg
-annotate ann out = go []
-    where
-      go exts (Subgoal goal k) = Subgoal goal (\ext -> go (exts ++ [ext]) $ (k $ out ext))
-      go exts (Effect m) = Effect (fmap (go exts) m)
-      go exts (Stateful s) = Stateful (fmap (go exts) . s)
-      go exts (Alt t1 t2) = Alt (go exts t1) (go exts t2)
-      go exts (Interleave t1 t2) = Interleave (go exts t1) (go exts t2)
-      go exts (Commit t1 t2) = Commit (go exts t1) (go exts t2)
-      go _ Empty = Empty
-      go _ (Failure err) = Failure err
-      go exts (Axiom ext) = Axiom $ ann exts ext
-
 mapExtract' :: Functor m => (a -> b) -> ProofStateT ext' a err s m jdg -> ProofStateT ext' b err s m jdg
 mapExtract' into = \case
     Subgoal goal k -> Subgoal goal $ mapExtract' into . k
