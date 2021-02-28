@@ -39,16 +39,38 @@ import           Data.List
 
 import           GHC.Generics
 
+-- | The core data type of the library.
+--
+-- NOTE: We need to split up the extract type into @ext'@ and @ext@, as
+-- we want to be functorial (and monadic) in @ext@, but it shows up in both
+-- co and contravariant positions. Splitting the type variable up into two solves this problem,
+-- at the cost of looking ugly.
 data ProofStateT ext' ext err s m goal
     = Subgoal goal (ext' -> ProofStateT ext' ext err s m goal)
+    -- ^ Represents a subgoal, and a continuation that tells
+    -- us what to do with the resulting extract.
     | Effect (m (ProofStateT ext' ext err s m goal))
+    -- ^ Run an effect.
     | Stateful (s -> (s, ProofStateT ext' ext err s m goal))
+    -- ^ Run a stateful computation. We don't want to use 'StateT' here, as it
+    -- doesn't play nice with backtracking.
     | Alt (ProofStateT ext' ext err s m goal) (ProofStateT ext' ext err s m goal)
+    -- ^ Combine together the results of two @ProofState@s.
     | Interleave (ProofStateT ext' ext err s m goal) (ProofStateT ext' ext err s m goal)
+    -- ^ Similar to 'Alt', but will interleave the results, rather than just appending them.
+    -- This is useful if the first argument produces potentially infinite results.
     | Commit (ProofStateT ext' ext err s m goal) (ProofStateT ext' ext err s m goal)
+    -- ^ 'Commit' runs the first proofstate, and only runs the second if the first
+    -- does not produce any successful results.
     | Empty
+    -- ^ Silent failure. Always causes a backtrack, unlike 'Failure'.
     | Failure err (ext' -> ProofStateT ext' ext err s m goal)
+    -- ^ This does double duty, depending on whether or not the user calls 'proofs'
+    -- or 'partialProofs'. In the first case, we ignore the continutation, and backtrack.
+    -- In the second, we treat this as a sort of "unsolvable subgoal", and call the
+    -- continuation with a hole.
     | Axiom ext
+    -- ^ Represents a simple extract.
     deriving stock (Generic)
 
 instance (Show goal, Show err, Show ext, Show (m (ProofStateT ext' ext err s m goal))) => Show (ProofStateT ext' ext err s m goal) where
