@@ -34,6 +34,16 @@ library:
   source-dirs: src
 
 tests:
+  examples:
+    main:                STLC.hs
+    source-dirs:         examples
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - refinery
+
   refinery-test:
     main:                Spec.hs
     source-dirs:         test

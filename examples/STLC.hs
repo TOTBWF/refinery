@@ -1,159 +1,89 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE LambdaCase #-}
-module STLC where
+{-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+module Main where
 
-import Control.Applicative
-import Control.Monad.Error
-import Control.Monad.State.Strict
-import Control.Monad.Trans
-import Control.Applicative
-import Data.Functor.Identity
-import Data.Foldable
+import Control.Monad.Identity
+import Control.Monad.State
+import Control.Monad.Except
 
-import Data.String (IsString)
-import Data.List (find)
-import Data.List.NonEmpty (NonEmpty)
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-
+import Refinery.ProofState
 import Refinery.Tactic
-import Refinery.SearchT
-
-newtype Var = V { unVar :: String }
-  deriving newtype (Show, Eq, Ord, IsString)
+import Data.List
+import Data.String (IsString(..))
 
 -- Just a very simple version of Simply Typed Lambda Calculus,
 -- augmented with 'Hole' so that we can have
 -- incomplete extracts.
 data Term
-  = Var Var
-  | Hole Var
-  | Lam Var Term
+  = Var String
+  | Hole
+  | Lam String Term
   | Pair Term Term
   deriving (Show)
 
+
 -- The type part of simply typed lambda calculus
 data Type
-  = TVar Var
-  | TArrow Type Type
+  = TVar String
+  | Type :-> Type
   | TPair Type Type
   deriving (Show, Eq)
 
+infixr 4 :->
+
+instance IsString Type where
+    fromString = TVar
+
 -- A judgement is just a context, along with a goal
-data Judgement = Judgement [(Var, Type)] Type
+data Judgement = [(String, Type)] :- Type
   deriving (Show)
 
-data TacticError
-  = UndefinedHypothesis Var
-  | GoalMismatch String Type
-  | UnsolvedSubgoals [Judgement]
-  deriving (Show)
+instance Semigroup Judgement where
+    a <> _ = a
+instance Monoid Judgement where
+    mempty = [] :- TVar "uhh"
 
-{- Fresh variable generation -}
-newtype FreshT m a = FreshT { unFreshT :: StateT (Map String Int) m a }
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadError err, MonadRule jdg ext, MonadProvable jdg)
+instance MonadExtract Term Identity where
+    hole = pure Hole
 
-runFreshT :: (Monad m) => FreshT m a -> m a
-runFreshT (FreshT m) = evalStateT m (Map.empty)
+type T a = TacticT Judgement Term String Int Identity a
 
-class (Monad m) => MonadFresh m where
-  fresh :: String -> m Var
-  default fresh :: (MonadTrans t, MonadFresh m1, t m1 ~ m) => String -> m Var
-  fresh = lift . fresh
+pair :: T ()
+pair = rule $ \case
+    (hys :- TPair a b) -> Pair <$> subgoal (hys :- a) <*> subgoal (hys :- b)
+    _                  -> throwError "goal mismatch: Pair"
 
-instance (Monad m) => MonadFresh (FreshT m) where
-  fresh n = FreshT $ gets (Map.lookup n) >>= \case
-    Just i -> do
-      modify (Map.adjust (+1) n)
-      return $ V (n ++ show i)
-    Nothing -> do
-      modify (Map.insert n 1)
-      return $ V n
+lam :: T ()
+lam = rule $ \case
+    (hys :- (a :-> b)) -> do
+        name <- gets show
+        modify (+ 1)
+        body <- subgoal $ ((name, a) : hys) :- b
+        pure $ Lam name body
+    _                  -> throwError "goal mismatch: Lam"
 
-instance (MonadFresh m) => MonadFresh (RuleT jdg ext m)
+assumption :: T ()
+assumption = rule $ \ (hys :- a) ->
+  case find (\(_, ty) -> ty == a) hys of
+    Just (x, _) -> pure $ Var x
+    Nothing     -> throwError "goal mismatch: Assumption"
 
-instance (MonadFresh m) => MonadExtract Term m where
-  hole = Hole <$> fresh "_"
-
-deriving anyclass instance (MonadFresh m) => MonadFresh (SearchT err m)
-deriving anyclass instance (MonadProvable jdg m) => MonadProvable jdg (SearchT err m)
-
-{- Tactics -}
-type Tactic = TacticT Judgement Term (SearchT [TacticError] (FreshT (ProvableT Judgement IO))) ()
-
-assumption :: Tactic
-assumption = do
-  (Judgement hy g) <- goal
-  asumWith (throwError [GoalMismatch "assumption" g]) $ fmap (\(v, _) -> rule $ \_ -> return $ Var v) $ filter ((== g) . snd) hy
-  -- asumWith (throwError $ [GoalMismatch "assumption" g]) $ fmap (return . Var . fst) $ filter ((== g) . snd) hy
-  -- traverse_ (\e -> throwError $ [UndefinedHypothesis e]) $ fmap fst $ filter ((== g) . snd) hy
-
-  -- case find ((== g) . snd) hy of
-  --   Just (n, _) -> return $ Var n
-  --   Nothing -> throwError $ [GoalMismatch "assumption" g]
-
-exact :: Var -> Tactic
-exact x = rule $ \(Judgement hy g) ->
-  case lookup x hy of
-    Just t -> if t == g then return (Var x) else throwError [GoalMismatch "exact" g]
-    Nothing -> throwError $ [UndefinedHypothesis x]
-
-intro :: Var -> Tactic
-intro x = rule $ \(Judgement hy g) ->
-  case g of
-    (TArrow a b) -> Lam x <$> subgoal (Judgement ((x, a):hy) b)
-    _ -> throwError $ [GoalMismatch "intro" g]
-
-intro_ :: Tactic
-intro_ = rule $ \(Judgement hy g) ->
-  case g of
-    (TArrow a b) -> do
-      x <- fresh "x"
-      Lam x <$> subgoal (Judgement ((x, a):hy) b)
-    _ -> throwError $ [GoalMismatch "intro_" g]
-
-split :: Tactic
-split = rule $ \(Judgement hy g) ->
-  case g of
-    (TPair l r) -> Pair <$> subgoal (Judgement hy l) <*> subgoal (Judgement hy r)
-    _ -> throwError $ [GoalMismatch "split" g]
-
-auto :: Tactic
+auto :: T ()
 auto = do
-  intro_ <|> split <|> assumption
-  auto
+    many_ lam
+    choice [ pair >> auto
+           , assumption
+           ]
 
-runTactic :: Type -> Tactic -> IO (Either [TacticError] (NonEmpty Term))
-runTactic ty tac = runProvableT $ runFreshT $ observeManyT $ runTacticT tac (Judgement [] ty) >>= \case
-  (t, []) -> return t
-  (_, sg) -> throwError $ [UnsolvedSubgoals sg]
+jdg :: Judgement
+jdg = ([] :- ("a" :-> "b" :-> (TPair "a" "b")))
 
-example1 = runTactic (TArrow (TVar "a") (TArrow (TVar "b") (TPair (TVar "b") (TArrow (TVar "c") (TVar "a"))))) $ do
-  intro "x"
-  intro "y"
-  split <@>
-    [ exact "y"
-    , do
-        intro "z"
-        exact "x"
-    ]
--- a -> b -> (b, c -> a)
-example2 = runTactic (TArrow (TVar "a") (TArrow (TVar "b") (TPair (TVar "b") (TArrow (TVar "c") (TVar "a"))))) auto
-
-example3 = runTactic (TArrow (TVar "a") (TArrow (TVar "a") (TVar "a"))) $ do
-  intro "y"
-  intro "x"
-  exact "x" <|> exact "y"
+main :: IO ()
+main = do
+    print $ runTacticT auto jdg 0

@@ -1,0 +1,10 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "refinery:lib"
+
+    - path: "./examples"
+      component: "refinery:test:examples"
+
+    - path: "./test"
+      component: "refinery:test:refinery-test"
