@@ -40,6 +40,7 @@ import           Data.List
 import           GHC.Generics
 
 -- | The core data type of the library.
+-- This represents a reified, in-progress proof strategy for a particular goal.
 --
 -- NOTE: We need to split up the extract type into @ext'@ and @ext@, as
 -- we want to be functorial (and monadic) in @ext@, but it shows up in both
@@ -66,7 +67,8 @@ data ProofStateT ext' ext err s m goal
     -- ^ Silent failure. Always causes a backtrack, unlike 'Failure'.
     | Failure err (ext' -> ProofStateT ext' ext err s m goal)
     -- ^ This does double duty, depending on whether or not the user calls 'proofs'
-    -- or 'partialProofs'. In the first case, we ignore the continutation, and backtrack.
+    -- or 'partialProofs'. In the first case, we ignore the continutation, backtrack, and
+    -- return an error in the result of 'proofs'.
     -- In the second, we treat this as a sort of "unsolvable subgoal", and call the
     -- continuation with a hole.
     | Axiom ext
@@ -165,6 +167,8 @@ data Proof ext s goal = Proof { pf_extract :: ext, pf_state :: s, pf_unsolvedGoa
     deriving (Eq, Show, Generic)
 
 -- | Interpret a 'ProofStateT' into a list of (possibly incomplete) extracts.
+-- This function will cause a proof to terminate when it encounters a 'Failure', and will return a 'Left'.
+-- If you want to still recieve an extract even when you encounter a failure, you should use 'partialProofs'.
 proofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [Either err (Proof ext s goal)]
 proofs s p = go s [] p
     where
@@ -193,10 +197,15 @@ data PartialProof ext s goal err
     -- during execution.
     deriving (Eq, Show, Generic)
 
+-- | Determines if a 'PartialProof' is a 'SuccessfulProof'.
 isSuccessful :: PartialProof ext s goal err -> Bool
 isSuccessful SuccessfulProof {} = True
 isSuccessful PartialProof {} = False
 
+-- | Interpret a 'ProofStateT' into a list of (possibly incomplete) extracts.
+-- This function will continue producing an extract when it encounters a 'Failure', leaving
+-- a hole in the extract in it's place. If you want the extraction to terminate when you encounter an error,
+-- you should use 'proofs'.
 partialProofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [PartialProof ext s goal err]
 partialProofs s pf = go s [] [] pf
     where
@@ -224,12 +233,6 @@ partialProofs s pf = go s [] [] pf
           go s goals (errs ++ [err]) $ k h
       go s goals [] (Axiom ext) = pure [SuccessfulProof ext s goals]
       go s goals errs (Axiom ext) = pure [PartialProof ext s goals errs]
-
-accumEither :: (Semigroup a, Semigroup b) => Either a b -> Either a b -> Either a b
-accumEither (Left a1) (Left a2)   = Left (a1 <> a2)
-accumEither (Right b1) (Right b2) = Right (b1 <> b2)
-accumEither Left{} x              = x
-accumEither x Left{}              = x
 
 instance (MonadIO m) => MonadIO (ProofStateT ext ext err s m) where
   liftIO = lift . liftIO
@@ -281,6 +284,9 @@ instance (Monad m) => MonadState s (ProofStateT ext ext err s m) where
 axiom :: ext -> ProofStateT ext' ext err s m jdg
 axiom = Axiom
 
+-- | @subgoals fs p@ will apply a list of functions producing a new 'ProofState' to each of the subgoals of @p@.
+-- If the list of functions is longer than the number of subgoals, then the extra functions are ignored.
+-- If the list of functions is shorter, then we simply apply @pure@ to all of the remaining subgoals.
 subgoals :: (Functor m) => [jdg -> ProofStateT ext ext err s m jdg] -> ProofStateT ext ext err s m jdg  -> ProofStateT ext ext err s m jdg
 subgoals [] (Subgoal goal k) = applyCont k (pure goal)
 subgoals (f:fs) (Subgoal goal k)  = applyCont (subgoals fs . k) (f goal)
