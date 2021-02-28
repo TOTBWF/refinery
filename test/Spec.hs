@@ -76,11 +76,13 @@ instance ( CoArbitrary ext'
   arbitrary = getSize >>= \case
     n | n <= 1 -> oneof small
     _ -> oneof $
-      [ Subgoal <$> decayArbitrary 2 <*> decayArbitrary 2
-      , Effect  <$> arbitrary
-      , Alt     <$> decayArbitrary 2 <*> decayArbitrary 2
-      , Stateful <$> arbitrary
-      , Failure <$> arbitrary <*> decayArbitrary 2
+      [ Subgoal    <$> decayArbitrary 2 <*> decayArbitrary 2
+      , Effect     <$> arbitrary
+      , Interleave <$> decayArbitrary 2 <*> decayArbitrary 2
+      , Alt        <$> decayArbitrary 2 <*> decayArbitrary 2
+      , Commit     <$> decayArbitrary 2 <*> decayArbitrary 2
+      , Stateful   <$> arbitrary
+      , Failure    <$> arbitrary <*> decayArbitrary 2
       ] ++ small
     where
       small =
@@ -152,7 +154,7 @@ main = hspec $ do
     it "distrib put over <|>" $ property $ distribPut (undefined :: TacticTest ())
     it "pure absorption on commit" $ property $ absorptionPureCommit (undefined :: TacticTest Int)
     it "empty identity on commit" $ property $ emptyIdentityCommit (undefined :: TacticTest Int)
-    it "failure identity on commit" $ property $ emptyIdentityCommit (undefined :: TacticTest Int)
+    it "failure identity on commit" $ property $ failureIdentityCommit (undefined :: TacticTest Int)
     -- it "constant peek" $ property $ peekConst (undefined :: TacticTest ())
 
 leftAltBind
