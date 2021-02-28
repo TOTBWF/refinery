@@ -33,8 +33,9 @@ module Refinery.Tactic
   , pruning
   , ensure
   -- * Extract Manipulation
-  , peek
   , tweak
+  , peek
+  , poke
   -- * Subgoal Manipulation
   , goal
   , focus
@@ -45,6 +46,8 @@ module Refinery.Tactic
   , subgoal
   , unsolvable
   ) where
+
+import Data.Bifunctor
 
 import Control.Applicative
 import Control.Monad.Except
@@ -138,20 +141,25 @@ ensure p f t = check >> t
 focus :: (Functor m) => TacticT jdg ext err s m () -> Int -> TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
 focus t n t' = t <@> (replicate n (pure ()) ++ [t'] ++ repeat (pure ()))
 
--- | @peek t k@ lets us examine the extract produced by @t@, and then run a tactic based off it's value.
-peek :: (Functor m) => TacticT jdg ext err s m () -> (ext -> TacticT jdg ext err s m ()) -> TacticT jdg ext err s m ()
-peek t k = (tactic $ \j -> Subgoal ((), j) (\e -> proofState (k e) j)) >> t
-
 -- | @tweak f t@ lets us modify the extract produced by the tactic @t@.
 tweak :: (Functor m) => (ext -> ext) -> TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
 tweak f t = tactic $ \j -> mapExtract' f $ proofState t j
+
+-- | @peek t k@ lets us examine the extract produced by @t@, and then run a tactic based off it's value.
+peek :: (Functor m) => TacticT jdg ext err s m a -> (ext -> TacticT jdg ext err s m b) -> TacticT jdg ext err s m a
+peek t k = (tactic $ \j -> Subgoal ((), j) (\e -> fmap (first (const ())) $ proofState (k e) j)) >> t
+
+-- | @poke t k@ lets us examine the extract produced by @t@, and then run a tactic that produces a new extract.
+poke :: (Functor m) => TacticT jdg ext err s m () -> (ext -> TacticT jdg ext err s m ext) -> TacticT jdg ext err s m ()
+poke t k = tactic $ \j -> Subgoal ((), j) $ \ext -> do
+    (ext', j') <- proofState (k ext) j
+    mapExtract' (const ext') $ proofState t j'
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 -- Note that this function will backtrack on errors. If you want a version that provides partial proofs,
 -- use 'runPartialTacticT'
 runTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [Either err (Proof ext s jdg)]
 runTacticT t j s = proofs s $ fmap snd $ proofState t j
-
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 -- Note that this function will produce a so called "Partial Proof". This means that we no longer backtrack on errors,
