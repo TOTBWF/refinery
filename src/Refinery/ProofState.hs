@@ -31,7 +31,6 @@ import           Control.Monad.Except
 import qualified Control.Monad.Writer.Lazy as LW
 import qualified Control.Monad.Writer.Strict as SW
 import           Control.Monad.State
-import           Control.Monad.Logic
 import           Control.Monad.Morph
 import           Control.Monad.Reader
 import           Data.Either
@@ -165,6 +164,11 @@ instance (MonadExtract ext m) => MonadExtract ext (ExceptT err m)
 
 data Proof ext s goal = Proof { pf_extract :: ext, pf_state :: s, pf_unsolvedGoals :: [goal] }
     deriving (Eq, Show, Generic)
+
+interleave :: [a] -> [a] -> [a]
+interleave (x : xs) (y : ys) = x : y : (interleave xs ys)
+interleave xs [] = xs
+interleave [] ys = ys
 
 -- | Interpret a 'ProofStateT' into a list of (possibly incomplete) extracts.
 -- This function will cause a proof to terminate when it encounters a 'Failure', and will return a 'Left'.

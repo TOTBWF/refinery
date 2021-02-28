@@ -22,7 +22,6 @@ description:         Please see the README on GitHub at <https://github.com/gith
 dependencies:
 - base >= 4.7 && < 5
 - exceptions >= 0.10
-- logict >= 0.6
 - mmorph >= 1
 - mtl >= 2
 
