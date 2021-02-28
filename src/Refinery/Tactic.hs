@@ -165,7 +165,10 @@ runTacticT t j s = proofs s $ fmap snd $ proofState t j
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 -- Note that this function will produce a so called "Partial Proof". This means that we no longer backtrack on errors,
 -- but rather leave an unsolved hole, and continue synthesizing a extract.
--- If you wnat a version that backgracks on errors, see 'runTacticT'.
+-- If you want a version that backgracks on errors, see 'runTacticT'.
+--
+-- Note that this version is inherently slower than 'runTacticT', as it needs to continue producing extracts.
+-- Furthermore, it will return all of the 'SuccessfulProof' before the 'PartialProof'.
 runPartialTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [PartialProof ext s jdg err]
 runPartialTacticT t j s = partialProofs s $ fmap snd $ proofState t j
 

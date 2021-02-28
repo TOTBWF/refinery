@@ -206,6 +206,8 @@ isSuccessful PartialProof {} = False
 -- This function will continue producing an extract when it encounters a 'Failure', leaving
 -- a hole in the extract in it's place. If you want the extraction to terminate when you encounter an error,
 -- you should use 'proofs'.
+--
+-- This function will return all the 'SuccessfulProof' before the 'PartialProof'.
 partialProofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [PartialProof ext s goal err]
 partialProofs s pf = go s [] [] pf
     where
