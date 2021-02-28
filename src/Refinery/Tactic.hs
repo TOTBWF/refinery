@@ -29,15 +29,18 @@ module Refinery.Tactic
   , gather
   , pruning
   , ensure
+  -- * Extract Manipulation
   , peek
+  , tweak
   -- * Subgoal Manipulation
   , goal
   , focus
   -- * Tactic Creation
   , MonadExtract(..)
-  , MonadRule(..)
   , RuleT
   , rule
+  , subgoal
+  , unsolvable
   ) where
 
 import Control.Applicative
@@ -77,13 +80,12 @@ many_ t = try (t >> many_ t)
 
 -- | Get the current goal
 goal :: (Functor m) => TacticT jdg ext err s m jdg
-goal = TacticT $ get
+goal = TacticT get
 
 -- | @choice ts@ will run all of the tactics in the list against the current subgoals,
 -- and interleave their extracts in a manner similar to '<%>'.
 choice :: (Monad m) => [TacticT jdg ext err s m a] -> TacticT jdg ext err s m a
-choice [] = empty
-choice (t:ts) = t <%> choice ts
+choice = foldr (<%>) empty
 
 -- | @progress eq err t@ applies the tactic @t@, and checks to see if the
 -- resulting subgoals are all equal to the initial goal by using @eq@. If they
@@ -113,7 +115,7 @@ pruning
     -> TacticT jdg ext err s m ()
 pruning t p = gather t $ maybe t throwError . p . fmap snd
 
--- | @filterT p f t@ runs the tactic @t@, and applies a predicate to the state after the execution of @t@. We also run
+-- | @ensure p f t@ runs the tactic @t@, and applies a predicate to the state after the execution of @t@. We also run
 -- a "cleanup" function @f@. Note that the predicate is applied to the state _before_ the cleanup function is run.
 ensure :: (Monad m) => (s -> Maybe err) -> (s -> s) -> TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
 ensure p f t = check >> t
@@ -126,7 +128,7 @@ ensure p f t = check >> t
           s <- get
           modify f
           case p s of
-            Just err -> throwError err
+            Just err -> unsolvable err
             Nothing -> pure e
 
 -- | Apply the first tactic, and then apply the second tactic focused on the @n@th subgoal.
@@ -134,8 +136,12 @@ focus :: (Functor m) => TacticT jdg ext err s m () -> Int -> TacticT jdg ext err
 focus t n t' = t <@> (replicate n (pure ()) ++ [t'] ++ repeat (pure ()))
 
 -- | @peek t k@ lets us examine the extract produced by @t@, and then run a tactic based off it's value.
-peek :: (Functor m) => TacticT jdg ext err s m a -> (ext -> TacticT jdg ext err s m b) -> TacticT jdg ext err s m a
-peek t k = (tactic $ \j -> Subgoal () (\e -> void $ proofState (k e) j)) >> t
+peek :: (Functor m) => TacticT jdg ext err s m () -> (ext -> TacticT jdg ext err s m ()) -> TacticT jdg ext err s m ()
+peek t k = (tactic $ \j -> Subgoal ((), j) (\e -> proofState (k e) j)) >> t
+
+-- | @tweak f t@ lets us modify the extract produced by the tactic @t@.
+tweak :: (Functor m) => (ext -> ext) -> TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
+tweak f t = tactic $ \j -> mapExtract' f $ proofState t j
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 runTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [Either err (ext, s, [jdg])]
@@ -144,4 +150,3 @@ runTacticT t j s = proofs s $ fmap snd $ proofState t j
 -- | Turn an inference rule into a tactic.
 rule :: (Monad m) => (jdg -> RuleT jdg ext err s m ext) -> TacticT jdg ext err s m ()
 rule r = tactic $ \j -> fmap ((),) $ unRuleT (r j)
-

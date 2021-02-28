@@ -28,8 +28,10 @@ module Refinery.Tactic.Internal
   , tactic
   , proofState
   , mapTacticT
-  , MonadRule(..)
+  -- * Rules
   , RuleT(..)
+  , subgoal
+  , unsolvable
   )
 where
 
@@ -121,7 +123,7 @@ instance Monad m => Monad (RuleT jdg ext err s m) where
   RuleT (Interleave p1 p2) >>= f = coerce $ Interleave (bindAlaCoerce f p1) (bindAlaCoerce f p2)
   RuleT (Commit p1 p2) >>= f = coerce $ Commit (bindAlaCoerce f p1) (bindAlaCoerce f p2)
   RuleT Empty              >>= _ = coerce $ Empty
-  RuleT (Failure err)      >>= _ = coerce $ Failure err
+  RuleT (Failure err k)    >>= f = coerce $ Failure err $ fmap (bindAlaCoerce f) k
   RuleT (Axiom e)          >>= f = f e
 
 instance Monad m => MonadState s (RuleT jdg ext err s m) where
@@ -138,7 +140,7 @@ instance MonadReader r m => MonadReader r (RuleT jdg ext err s m) where
     local f (RuleT (Interleave p1 p2)) = coerce $ Interleave (localAlaCoerce f p1) (localAlaCoerce f p2)
     local f (RuleT (Commit p1 p2)) = coerce $ Commit (localAlaCoerce f p1) (localAlaCoerce f p2)
     local _ (RuleT Empty)              = coerce $ Empty
-    local _ (RuleT (Failure err))      = coerce $ Failure err
+    local f (RuleT (Failure err k))    = coerce $ Failure err (localAlaCoerce f . k)
     local _ (RuleT (Axiom e))          = coerce $ Axiom e
 
 bindAlaCoerce
@@ -160,19 +162,11 @@ instance MFunctor (RuleT jdg ext err s) where
 instance MonadIO m => MonadIO (RuleT jdg ext err s m) where
   liftIO = lift . liftIO
 
-instance Monad m => MonadError err (RuleT jdg ext err s m) where
-  throwError = coerce . Failure
-  catchError r h = coerce $ flip catchError h $ coerce r
+-- | Create a subgoal, and return the resulting extract.
+subgoal :: jdg -> RuleT jdg ext err s m ext
+subgoal jdg = RuleT $ Subgoal jdg Axiom
 
-class (Monad m) => MonadRule jdg ext m | m -> jdg, m -> ext where
-  -- | Create a subgoal, and return the resulting extract.
-  subgoal :: jdg -> m ext
-  default subgoal :: (MonadTrans t, MonadRule jdg ext m1, m ~ t m1) => jdg -> m ext
-  subgoal = lift . subgoal
-
-instance (Monad m) => MonadRule jdg ext (RuleT jdg ext err s m) where
-  subgoal j = RuleT $ Subgoal j Axiom
-
-instance (MonadRule jdg ext m) => MonadRule jdg ext (ReaderT env m)
-instance (MonadRule jdg ext m) => MonadRule jdg ext (StateT env m)
-instance (MonadRule jdg ext m) => MonadRule jdg ext (ExceptT env m)
+-- | Create an "unsolvable" hole. These holes are ignored by subsequent tactics,
+-- but do not cause a backtracking failure.
+unsolvable :: err -> RuleT jdg ext err s m ext
+unsolvable err = RuleT $ Failure err Axiom

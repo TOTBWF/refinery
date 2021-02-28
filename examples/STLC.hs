@@ -57,7 +57,7 @@ type T a = TacticT Judgement Term String Int Identity a
 pair :: T ()
 pair = rule $ \case
     (hys :- TPair a b) -> Pair <$> subgoal (hys :- a) <*> subgoal (hys :- b)
-    _                  -> throwError "goal mismatch: Pair"
+    _                  -> unsolvable "goal mismatch: Pair"
 
 lam :: T ()
 lam = rule $ \case
@@ -66,13 +66,13 @@ lam = rule $ \case
         modify (+ 1)
         body <- subgoal $ ((name, a) : hys) :- b
         pure $ Lam name body
-    _                  -> throwError "goal mismatch: Lam"
+    _                  -> unsolvable "goal mismatch: Lam"
 
 assumption :: T ()
 assumption = rule $ \ (hys :- a) ->
   case find (\(_, ty) -> ty == a) hys of
     Just (x, _) -> pure $ Var x
-    Nothing     -> throwError "goal mismatch: Assumption"
+    Nothing     -> unsolvable "goal mismatch: Assumption"
 
 auto :: T ()
 auto = do
