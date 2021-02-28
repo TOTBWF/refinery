@@ -6,16 +6,19 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-module Main where
+module Spec.STLC where
+
+import Data.Either
+import Data.List
+import Data.String (IsString(..))
 
 import Control.Monad.Identity
 import Control.Monad.State
-import Control.Monad.Except
 
 import Refinery.ProofState
 import Refinery.Tactic
-import Data.List
-import Data.String (IsString(..))
+
+import Test.Hspec
 
 -- Just a very simple version of Simply Typed Lambda Calculus,
 -- augmented with 'Hole' so that we can have
@@ -25,7 +28,7 @@ data Term
   | Hole
   | Lam String Term
   | Pair Term Term
-  deriving (Show)
+  deriving (Show, Eq)
 
 
 -- The type part of simply typed lambda calculus
@@ -43,11 +46,6 @@ instance IsString Type where
 -- A judgement is just a context, along with a goal
 data Judgement = [(String, Type)] :- Type
   deriving (Show)
-
-instance Semigroup Judgement where
-    a <> _ = a
-instance Monoid Judgement where
-    mempty = [] :- TVar "uhh"
 
 instance MonadExtract Term Identity where
     hole = pure Hole
@@ -81,9 +79,19 @@ auto = do
            , assumption
            ]
 
+refine :: T ()
+refine = do
+    many_ lam
+    try pair
+
 jdg :: Judgement
 jdg = ([] :- ("a" :-> "b" :-> (TPair "a" "b")))
 
-main :: IO ()
-main = do
-    print $ runTacticT auto jdg 0
+solutions :: T () -> Judgement -> [Term]
+solutions t j = map pf_extract $ rights $ runIdentity $ runTacticT t j 0
+
+stlcTests :: Spec
+stlcTests = do
+    describe "Simply Typed Lambda Calculus" $ do
+        it "auto synthesize a solution"           $ (solutions auto jdg) `shouldBe` [(Lam "0" $ Lam "1" $ Pair (Var "0") (Var "1"))]
+        it "refine synthesizes a single solution" $ (solutions refine jdg) `shouldBe` [(Lam "0" $ Lam "1" $ Pair Hole Hole)]
