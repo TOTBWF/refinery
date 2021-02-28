@@ -38,6 +38,7 @@ module Refinery.Tactic
   , poke
   -- * Subgoal Manipulation
   , goal
+  , inspect
   , focus
   -- * Tactic Creation
   , MonadExtract(..)
@@ -88,6 +89,10 @@ many_ t = try (t >> many_ t)
 -- | Get the current goal
 goal :: (Functor m) => TacticT jdg ext err s m jdg
 goal = TacticT get
+
+-- | Inspect the current goal.
+inspect :: (Functor m) => (jdg -> a) -> TacticT jdg ext err s m a
+inspect f = TacticT $ gets f
 
 -- | @choice ts@ will run all of the tactics in the list against the current subgoals,
 -- and interleave their extracts in a manner similar to '<%>'.
