@@ -281,6 +281,7 @@ instance (Monad m) => MonadState s (ProofStateT ext ext err s m) where
       let (a, s') = f s
       in (s', pure a)
 
+{-# DEPRECATED axiom "Use Axiom instead" #-}
 axiom :: ext -> ProofStateT ext' ext err s m jdg
 axiom = Axiom
 
