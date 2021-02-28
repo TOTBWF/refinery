@@ -18,6 +18,9 @@
 module Refinery.Tactic
   ( TacticT
   , runTacticT
+  , runPartialTacticT
+  , Proof(..)
+  , PartialProof(..)
   -- * Tactic Combinators
   , (<@>)
   , (<%>)
@@ -105,7 +108,7 @@ gather t f = tactic $ \j -> do
     results <- lift $ proofs s $ proofState t j
     msum $ flip fmap results $ \case
         Left err -> throwError err
-        Right (_, _, jdgs) -> proofState (f jdgs) j
+        Right (Proof _ _ jdgs) -> proofState (f jdgs) j
 
 -- | @pruning t f@ runs the tactic @t@, and then applies a predicate to all of the generated subgoals.
 pruning
@@ -144,8 +147,18 @@ tweak :: (Functor m) => (ext -> ext) -> TacticT jdg ext err s m () -> TacticT jd
 tweak f t = tactic $ \j -> mapExtract' f $ proofState t j
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
-runTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [Either err (ext, s, [jdg])]
+-- Note that this function will backtrack on errors. If you want a version that provides partial proofs,
+-- use 'runPartialTacticT'
+runTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [Either err (Proof ext s jdg)]
 runTacticT t j s = proofs s $ fmap snd $ proofState t j
+
+
+-- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
+-- Note that this function will produce a so called "Partial Proof". This means that we no longer backtrack on errors,
+-- but rather leave an unsolved hole, and continue synthesizing a extract.
+-- If you wnat a version that backgracks on errors, see 'runTacticT'.
+runPartialTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [PartialProof ext s jdg err]
+runPartialTacticT t j s = partialProofs s $ fmap snd $ proofState t j
 
 -- | Turn an inference rule into a tactic.
 rule :: (Monad m) => (jdg -> RuleT jdg ext err s m ext) -> TacticT jdg ext err s m ()

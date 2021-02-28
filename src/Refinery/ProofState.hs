@@ -139,9 +139,11 @@ instance (MonadExtract ext m, Monoid w) => MonadExtract ext (LW.WriterT w m)
 instance (MonadExtract ext m, Monoid w) => MonadExtract ext (SW.WriterT w m)
 instance (MonadExtract ext m) => MonadExtract ext (ExceptT err m)
 
+data Proof ext s goal = Proof { pf_extract :: ext, pf_state :: s, pf_unsolvedGoals :: [goal] }
+    deriving (Eq, Show, Generic)
 
 -- | Interpret a 'ProofStateT' into a list of (possibly incomplete) extracts.
-proofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [Either err (ext, s, [goal])]
+proofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [Either err (Proof ext s goal)]
 proofs s p = go s [] p
     where
       go s goals (Subgoal goal k) = do
@@ -158,7 +160,7 @@ proofs s p = go s [] p
           solns -> pure solns
       go _ _ Empty = pure []
       go _ _ (Failure err _) = pure [throwError err]
-      go s goals (Axiom ext) = pure [Right (ext, s, goals)]
+      go s goals (Axiom ext) = pure [Right $ Proof ext s goals]
 
 -- | The result of executing 'partialProofs'.
 data PartialProof ext s goal err
@@ -167,7 +169,7 @@ data PartialProof ext s goal err
     | PartialProof ext s [goal] [err]
     -- ^ A so called "partial proof". These are proofs that encountered errors
     -- during execution.
-    deriving (Show)
+    deriving (Eq, Show, Generic)
 
 isSuccessful :: PartialProof ext s goal err -> Bool
 isSuccessful SuccessfulProof {} = True
