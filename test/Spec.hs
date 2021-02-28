@@ -4,7 +4,6 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE UndecidableInstances       #-}
 {-# OPTIONS_GHC -Wredundant-constraints #-}
@@ -28,10 +27,11 @@ import Test.QuickCheck hiding (Failure)
 import Test.QuickCheck.Checkers
 import Test.QuickCheck.Classes
 import Checkers
+import Data.Foldable
 
 testBatch :: TestBatch -> Spec
 testBatch (batchName, tests) = describe ("laws for: " ++ batchName) $
-  foldr (>>) (return ()) (map (uncurry it) tests)
+  traverse_ (uncurry it) tests
 
 
 instance (MonadExtract ext m, EqProp (m [Either err (ext, s, [a])]), Arbitrary s)
@@ -40,8 +40,7 @@ instance (MonadExtract ext m, EqProp (m [Either err (ext, s, [a])]), Arbitrary s
     s <- arbitrary
     pure $ ((=-=) `on` proofs s) a b
 
-instance ( Show jdg
-         , MonadExtract ext m
+instance ( MonadExtract ext m
          , Arbitrary jdg
          , EqProp (m [Either err (ext, s, [jdg])])
          , Show s
@@ -50,11 +49,9 @@ instance ( Show jdg
       => EqProp (TacticT jdg ext err s m a) where
   (=-=) = (=-=) `on` runTacticT . (() <$)
 
-instance ( Show jdg
-         , Arbitrary jdg
+instance ( Arbitrary jdg
          , EqProp (m [Either err (ext, s, [jdg])])
          , MonadExtract ext m
-         , Show s
          , Arbitrary s
          )
       => EqProp (RuleT jdg ext err s m ext) where
@@ -79,11 +76,11 @@ instance ( CoArbitrary ext'
       , Effect  <$> arbitrary
       , Alt     <$> decayArbitrary 2 <*> decayArbitrary 2
       , Stateful <$> arbitrary
+      , Failure <$> arbitrary <*> decayArbitrary 2
       ] ++ small
     where
       small =
         [ pure Empty
-        , Failure <$> arbitrary
         , Axiom   <$> arbitrary
         ]
   shrink = genericShrink
@@ -133,7 +130,7 @@ main = hspec $ do
     testBatch $ monad       (undefined :: ProofStateTest (Int, Int, Int))
     testBatch $ monadPlus   (undefined :: ProofStateTest (Int, Int))
     testBatch $ monadState  (undefined :: ProofStateTest (Int, Int))
-    it "distrib put over <|>" $ property $ distribPut (undefined :: ProofStateTest (Int))
+    it "distrib put over <|>" $ property $ distribPut (undefined :: ProofStateTest Int)
   describe "RuleT" $ do
     testBatch $ functor     (undefined :: RuleTest (Int, Int, Int))
     testBatch $ applicative (undefined :: RuleTest (Int, Int, Int))
@@ -151,6 +148,22 @@ main = hspec $ do
     it "pure absorption on commit" $ property $ absorptionPureCommit (undefined :: TacticTest Int)
     it "empty identity on commit" $ property $ emptyIdentityCommit (undefined :: TacticTest Int)
     it "failure identity on commit" $ property $ emptyIdentityCommit (undefined :: TacticTest Int)
+    it "constant peek" $ property $ peekConst (undefined :: TacticTest ())
+
+
+-- subgoalGoal
+--     :: forall jdg ext err s m a.
+--     ( EqProp (m [Either err (ext, s, [jdg])])
+--     , Show (m [Either err (ext, s, [jdg])])
+--     , MonadExtract ext m
+--     , Arbitrary jdg
+--     , Arbitrary s
+--     )
+--     => TacticT jdg ext err s m a
+--     -> jdg
+--     -> Property
+-- subgoalGoal _ j' =
+--     (rule @m @jdg @ext @err @s (const (subgoal j')) >> goal) =-= pure j'
 
 leftAltBind
     :: forall m a b
@@ -170,8 +183,10 @@ rightAltBind m1 m2 m3 =
 
 interleaveMZero
     :: forall m a jdg ext err s
-     . (MonadExtract ext m, EqProp (m [Either err (ext, s, [jdg])]),
-      Show jdg, Show s, Arbitrary jdg, Arbitrary s)
+     . (MonadExtract ext m
+       , EqProp (m [Either err (ext, s, [jdg])])
+       , Show (m [Either err (ext, s, [jdg])])
+       , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> TacticT jdg ext err s m a
     -> Property
@@ -180,8 +195,10 @@ interleaveMZero _ m =
 
 interleaveMPlus
     :: forall m a jdg ext err s
-     . (MonadExtract ext m, EqProp (m [Either err (ext, s, [jdg])]),
-      Show jdg, Show s, Arbitrary jdg, Arbitrary s)
+     . (MonadExtract ext m
+       , EqProp (m [Either err (ext, s, [jdg])])
+       , Show (m [Either err (ext, s, [jdg])])
+       , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> a
     -> TacticT jdg ext err s m a
@@ -213,32 +230,51 @@ distribPut _ = property $ do
 
 absorptionPureCommit
     :: forall m a jdg ext err s
-     . (MonadExtract ext m, EqProp (m [Either err (ext, s, [jdg])]),
-      Show jdg, Show s, Arbitrary jdg, Arbitrary s)
+     . (MonadExtract ext m
+       , EqProp (m [Either err (ext, s, [jdg])])
+       , Show (m [Either err (ext, s, [jdg])])
+       , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> a
     -> TacticT jdg ext err s m a
     -> Property
 absorptionPureCommit _ a t =
-    (commit (pure a) t) =-= pure a
+    commit (pure a) t =-= pure a
 
 emptyIdentityCommit
     :: forall m a jdg ext err s
-     . (MonadExtract ext m, EqProp (m [Either err (ext, s, [jdg])]),
-      Show jdg, Show s, Arbitrary jdg, Arbitrary s)
+     . (MonadExtract ext m
+       , EqProp (m [Either err (ext, s, [jdg])])
+       , Show (m [Either err (ext, s, [jdg])])
+       , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> TacticT jdg ext err s m a
     -> Property
 emptyIdentityCommit _ t =
-    (commit empty t) =-= t
+    commit empty t =-= t
 
 failureIdentityCommit
     :: forall m a jdg ext err s
-     . (MonadExtract ext m, EqProp (m [Either err (ext, s, [jdg])]),
-      Show jdg, Show s, Arbitrary jdg, Arbitrary s)
+     . (MonadExtract ext m
+       , EqProp (m [Either err (ext, s, [jdg])])
+       , Show (m [Either err (ext, s, [jdg])])
+       , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> err
     -> TacticT jdg ext err s m a
     -> Property
 failureIdentityCommit _ e t =
-    (commit (throwError e) t) =-= t
+    commit (throwError e) t =-= t
+
+peekConst
+    :: forall m jdg ext err s
+     . (MonadExtract ext m
+       , EqProp (m [Either err (ext, s, [jdg])])
+       , Show (m [Either err (ext, s, [jdg])])
+       , Arbitrary jdg, Arbitrary s)
+    => TacticT jdg ext err s m ()  -- ^ proxy
+    -> TacticT jdg ext err s m ()
+    -> TacticT jdg ext err s m ()
+    -> Property
+peekConst _ t t' =
+    peek t (const t') =-= (t' >> t)
