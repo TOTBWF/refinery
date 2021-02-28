@@ -45,6 +45,7 @@ instance ( MonadExtract ext m
          , EqProp (m [Either err (ext, s, [jdg])])
          , Show s
          , Arbitrary s
+         , Show jdg
          )
       => EqProp (TacticT jdg ext err s m a) where
   (=-=) = (=-=) `on` runTacticT . (() <$)
@@ -53,6 +54,7 @@ instance ( Arbitrary jdg
          , EqProp (m [Either err (ext, s, [jdg])])
          , MonadExtract ext m
          , Arbitrary s
+         , Show s , Show jdg
          )
       => EqProp (RuleT jdg ext err s m ext) where
   (=-=) = (=-=) `on` rule . const
@@ -148,22 +150,7 @@ main = hspec $ do
     it "pure absorption on commit" $ property $ absorptionPureCommit (undefined :: TacticTest Int)
     it "empty identity on commit" $ property $ emptyIdentityCommit (undefined :: TacticTest Int)
     it "failure identity on commit" $ property $ emptyIdentityCommit (undefined :: TacticTest Int)
-    it "constant peek" $ property $ peekConst (undefined :: TacticTest ())
-
-
--- subgoalGoal
---     :: forall jdg ext err s m a.
---     ( EqProp (m [Either err (ext, s, [jdg])])
---     , Show (m [Either err (ext, s, [jdg])])
---     , MonadExtract ext m
---     , Arbitrary jdg
---     , Arbitrary s
---     )
---     => TacticT jdg ext err s m a
---     -> jdg
---     -> Property
--- subgoalGoal _ j' =
---     (rule @m @jdg @ext @err @s (const (subgoal j')) >> goal) =-= pure j'
+    -- it "constant peek" $ property $ peekConst (undefined :: TacticTest ())
 
 leftAltBind
     :: forall m a b
@@ -185,7 +172,7 @@ interleaveMZero
     :: forall m a jdg ext err s
      . (MonadExtract ext m
        , EqProp (m [Either err (ext, s, [jdg])])
-       , Show (m [Either err (ext, s, [jdg])])
+       , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> TacticT jdg ext err s m a
@@ -197,7 +184,7 @@ interleaveMPlus
     :: forall m a jdg ext err s
      . (MonadExtract ext m
        , EqProp (m [Either err (ext, s, [jdg])])
-       , Show (m [Either err (ext, s, [jdg])])
+       , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> a
@@ -232,7 +219,7 @@ absorptionPureCommit
     :: forall m a jdg ext err s
      . (MonadExtract ext m
        , EqProp (m [Either err (ext, s, [jdg])])
-       , Show (m [Either err (ext, s, [jdg])])
+       , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> a
@@ -245,7 +232,7 @@ emptyIdentityCommit
     :: forall m a jdg ext err s
      . (MonadExtract ext m
        , EqProp (m [Either err (ext, s, [jdg])])
-       , Show (m [Either err (ext, s, [jdg])])
+       , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> TacticT jdg ext err s m a
@@ -257,7 +244,7 @@ failureIdentityCommit
     :: forall m a jdg ext err s
      . (MonadExtract ext m
        , EqProp (m [Either err (ext, s, [jdg])])
-       , Show (m [Either err (ext, s, [jdg])])
+       , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
     -> err
@@ -266,15 +253,15 @@ failureIdentityCommit
 failureIdentityCommit _ e t =
     commit (throwError e) t =-= t
 
-peekConst
-    :: forall m jdg ext err s
-     . (MonadExtract ext m
-       , EqProp (m [Either err (ext, s, [jdg])])
-       , Show (m [Either err (ext, s, [jdg])])
-       , Arbitrary jdg, Arbitrary s)
-    => TacticT jdg ext err s m ()  -- ^ proxy
-    -> TacticT jdg ext err s m ()
-    -> TacticT jdg ext err s m ()
-    -> Property
-peekConst _ t t' =
-    peek t (const t') =-= (t' >> t)
+-- peekConst
+--     :: forall m jdg ext err s
+--      . (MonadExtract ext m
+--        , EqProp (m [Either err (ext, s, [jdg])])
+--        , Show s , Show jdg
+--        , Arbitrary jdg, Arbitrary s)
+--     => TacticT jdg ext err s m ()  -- ^ proxy
+--     -> TacticT jdg ext err s m ()
+--     -> TacticT jdg ext err s m ()
+--     -> Property
+-- peekConst _ t t' =
+--     peek t (const t') =-= (t' >> t)
