@@ -43,6 +43,7 @@ module Refinery.Tactic
   , MonadExtract(..)
   , RuleT
   , rule
+  , rule_
   , subgoal
   , unsolvable
   ) where
@@ -168,6 +169,10 @@ runTacticT t j s = proofs s $ fmap snd $ proofState t j
 runPartialTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [PartialProof ext s jdg err]
 runPartialTacticT t j s = partialProofs s $ fmap snd $ proofState t j
 
--- | Turn an inference rule into a tactic.
+-- | Turn an inference rule that examines the current goal into a tactic.
 rule :: (Monad m) => (jdg -> RuleT jdg ext err s m ext) -> TacticT jdg ext err s m ()
 rule r = tactic $ \j -> fmap ((),) $ unRuleT (r j)
+
+-- | Turn an inference rule into a tactic.
+rule_ :: (Monad m) => RuleT jdg ext err s m ext -> TacticT jdg ext err s m ()
+rule_ r = tactic $ \_ -> fmap ((),) $ unRuleT r
