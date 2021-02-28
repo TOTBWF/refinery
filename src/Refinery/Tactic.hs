@@ -27,6 +27,7 @@ module Refinery.Tactic
   , commit
   , try
   , many_
+  , some_
   , choice
   , progress
   , gather
@@ -80,11 +81,21 @@ commit t1 t2 = tactic $ \j -> Commit (proofState t1 j) (proofState t2 j)
 
 -- | Tries to run a tactic, backtracking on failure
 try :: (Monad m) => TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
-try t = t <|> pure ()
+try t = t `commit` pure ()
 
--- | Runs a tactic repeatedly until it fails
+-- | Runs a tactic 0 or more times until it fails.
+-- Note that 'many_' is almost always the right choice over 'many'.
+-- Due to the semantics of 'Alternative', 'many' will create a bunch
+-- of partially solved goals along the way, one for each iteration.
 many_ :: (Monad m) => TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
 many_ t = try (t >> many_ t)
+
+-- | Runs a tactic 1 or more times until it fails.
+-- Note that 'some_' is almost always the right choice over 'some'.
+-- Due to the semantics of 'Alternative', 'some' will create a bunch
+-- of partially solved goals along the way, one for each iteration.
+some_ :: (Monad m) => TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
+some_ t = t >> many_ t
 
 -- | Get the current goal
 goal :: (Functor m) => TacticT jdg ext err s m jdg
