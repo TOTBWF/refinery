@@ -138,6 +138,7 @@ main = hspec $ do
   describe "RuleT" $ do
     testBatch $ functor     (undefined :: RuleTest (Int, Int, Int))
     testBatch $ applicative (undefined :: RuleTest (Int, Int, Int))
+    testBatch $ alternative (undefined :: RuleTest Int)
     testBatch $ monad       (undefined :: RuleTest (Int, Int, Int))
   describe "TacticT" $ do
     testBatch $ functor     (undefined :: TacticTest ((), (), ()))

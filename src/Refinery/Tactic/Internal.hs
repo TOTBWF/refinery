@@ -114,6 +114,10 @@ instance Monad m => Applicative (RuleT jdg ext err s m) where
   pure = return
   (<*>) = ap
 
+instance Monad m => Alternative (RuleT jdg ext err s m) where
+    empty = coerce Empty
+    (<|>) = coerce Alt
+
 instance Monad m => Monad (RuleT jdg ext err s m) where
   return = coerce . Axiom
   RuleT (Subgoal goal k)   >>= f = coerce $ Subgoal goal $ fmap (bindAlaCoerce f) k
