@@ -29,6 +29,7 @@ module Refinery.Tactic
   , gather
   , pruning
   , ensure
+  , peek
   -- * Subgoal Manipulation
   , goal
   , focus
@@ -131,6 +132,10 @@ ensure p f t = check >> t
 -- | Apply the first tactic, and then apply the second tactic focused on the @n@th subgoal.
 focus :: (Functor m) => TacticT jdg ext err s m () -> Int -> TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
 focus t n t' = t <@> (replicate n (pure ()) ++ [t'] ++ repeat (pure ()))
+
+-- | @peek t k@ lets us examine the extract produced by @t@, and then run a tactic based off it's value.
+peek :: (Functor m) => TacticT jdg ext err s m a -> (ext -> TacticT jdg ext err s m b) -> TacticT jdg ext err s m a
+peek t k = (tactic $ \j -> Subgoal () (\e -> void $ proofState (k e) j)) >> t
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 runTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [Either err (ext, s, [jdg])]
