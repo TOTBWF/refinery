@@ -1,0 +1,69 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.34.3.
+--
+-- see: https://github.com/sol/hpack
+
+name:           refinery
+version:        0.3.0.0
+synopsis:       Toolkit for building proof automation systems
+description:    Please see the README on GitHub at <https://github.com/githubuser/refinery#readme>
+category:       Language
+homepage:       https://github.com/totbwf/refinery#readme
+bug-reports:    https://github.com/totbwf/refinery/issues
+author:         Reed Mullanix
+maintainer:     reedmullanix@gmail.com
+copyright:      2019 Reed Mullanix
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+tested-with:
+    GHC ==8.6.5
+  , GHC ==8.8.3
+  , GHC ==8.10.4
+extra-source-files:
+    README.md
+    ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/totbwf/refinery
+
+library
+  exposed-modules:
+      Refinery.ProofState
+      Refinery.Tactic
+      Refinery.Tactic.Internal
+  other-modules:
+      Paths_refinery
+  hs-source-dirs:
+      src
+  ghc-options: -Wall -Wredundant-constraints
+  build-depends:
+      base >=4.7 && <5
+    , exceptions >=0.10
+    , mmorph >=1
+    , mtl >=2
+  default-language: Haskell2010
+
+test-suite refinery-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Checkers
+      Spec.PropertyTests
+      Spec.STLC
+      Paths_refinery
+  hs-source-dirs:
+      test
+  ghc-options: -Wall -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      QuickCheck
+    , base >=4.7 && <5
+    , checkers
+    , exceptions >=0.10
+    , hspec
+    , mmorph >=1
+    , mtl >=2
+    , refinery
+  default-language: Haskell2010
