@@ -149,18 +149,28 @@ instance (Monad m) => MonadPlus (ProofStateT ext ext err s m) where
     mzero = empty
     mplus = (<|>)
 
-class (Monad m) => MonadExtract ext m | m -> ext where
+class (Monad m) => MonadExtract ext err m | m -> ext, m -> err where
   -- | Generates a "hole" of type @ext@, which should represent
   -- an incomplete extract.
   hole :: m ext
-  default hole :: (MonadTrans t, MonadExtract ext m1, m ~ t m1) => m ext
+  default hole :: (MonadTrans t, MonadExtract ext err m1, m ~ t m1) => m ext
   hole = lift hole
 
-instance (MonadExtract ext m) => MonadExtract ext (ReaderT r m)
-instance (MonadExtract ext m) => MonadExtract ext (StateT s m)
-instance (MonadExtract ext m, Monoid w) => MonadExtract ext (LW.WriterT w m)
-instance (MonadExtract ext m, Monoid w) => MonadExtract ext (SW.WriterT w m)
-instance (MonadExtract ext m) => MonadExtract ext (ExceptT err m)
+  -- | Generates an "unsolvable hole" of type @err@, which should represent
+  -- an incomplete extract that we have no hope of solving.
+  --
+  -- These will get generated when you generate partial extracts via 'runPartialTacticT'.
+  unsolvableHole :: err -> m ext
+  default unsolvableHole :: (MonadTrans t, MonadExtract ext err m1, m ~ t m1) => err -> m ext
+  unsolvableHole = lift . unsolvableHole
+  -- default hole :: (MonadTrans t, MonadExtract ext m1, m ~ t m1) => m ext
+  -- hole = lift hole
+
+instance (MonadExtract ext err m) => MonadExtract ext err (ReaderT r m)
+instance (MonadExtract ext err m) => MonadExtract ext err (StateT s m)
+instance (MonadExtract ext err m, Monoid w) => MonadExtract ext err (LW.WriterT w m)
+instance (MonadExtract ext err m, Monoid w) => MonadExtract ext err (SW.WriterT w m)
+instance (MonadExtract ext err m) => MonadExtract ext err (ExceptT err m)
 
 data Proof ext s goal = Proof { pf_extract :: ext, pf_state :: s, pf_unsolvedGoals :: [goal] }
     deriving (Eq, Show, Generic)
@@ -173,7 +183,7 @@ interleave [] ys = ys
 -- | Interpret a 'ProofStateT' into a list of (possibly incomplete) extracts.
 -- This function will cause a proof to terminate when it encounters a 'Failure', and will return a 'Left'.
 -- If you want to still recieve an extract even when you encounter a failure, you should use 'partialProofs'.
-proofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [Either err (Proof ext s goal)]
+proofs :: forall ext err s m goal. (MonadExtract ext err m) => s -> ProofStateT ext ext err s m goal -> m [Either err (Proof ext s goal)]
 proofs s p = go s [] p
     where
       go s goals (Subgoal goal k) = do
@@ -212,7 +222,7 @@ isSuccessful PartialProof {} = False
 -- you should use 'proofs'.
 --
 -- This function will return all the 'SuccessfulProof' before the 'PartialProof'.
-partialProofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [PartialProof ext s goal err]
+partialProofs :: forall ext err s m goal. (MonadExtract ext err m) => s -> ProofStateT ext ext err s m goal -> m [PartialProof ext s goal err]
 partialProofs s pf = go s [] [] pf
     where
       prioritizing :: ([PartialProof ext s goal err] -> [PartialProof ext s goal err] -> [PartialProof ext s goal err]) -> [PartialProof ext s goal err] -> [PartialProof ext s goal err] -> [PartialProof ext s goal err]
@@ -235,7 +245,7 @@ partialProofs s pf = go s [] [] pf
           solns -> pure solns
       go _ _ _ Empty = pure []
       go s goals errs (Failure err k) = do
-          h <- hole
+          h <- unsolvableHole err
           go s goals (errs ++ [err]) $ k h
       go s goals [] (Axiom ext) = pure [SuccessfulProof ext s goals]
       go s goals errs (Axiom ext) = pure [PartialProof ext s goals errs]

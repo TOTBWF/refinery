@@ -122,7 +122,7 @@ progress eq err t = do
 
 -- | @gather t f@ runs the tactic @t@, then runs @f@ with all of the generated subgoals to determine
 -- the next tactic to run.
-gather :: (MonadExtract ext m) => TacticT jdg ext err s m a -> ([(a, jdg)] -> TacticT jdg ext err s m a) -> TacticT jdg ext err s m a
+gather :: (MonadExtract ext err m) => TacticT jdg ext err s m a -> ([(a, jdg)] -> TacticT jdg ext err s m a) -> TacticT jdg ext err s m a
 gather t f = tactic $ \j -> do
     s <- get
     results <- lift $ proofs s $ proofState t j
@@ -132,7 +132,7 @@ gather t f = tactic $ \j -> do
 
 -- | @pruning t f@ runs the tactic @t@, and then applies a predicate to all of the generated subgoals.
 pruning
-    :: (MonadExtract ext m)
+    :: (MonadExtract ext err m)
     => TacticT jdg ext err s m ()
     -> ([jdg] -> Maybe err)
     -> TacticT jdg ext err s m ()
@@ -175,7 +175,7 @@ poke t k = tactic $ \j -> Subgoal ((), j) $ \ext -> do
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 -- Note that this function will backtrack on errors. If you want a version that provides partial proofs,
 -- use 'runPartialTacticT'
-runTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [Either err (Proof ext s jdg)]
+runTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m [Either err (Proof ext s jdg)]
 runTacticT t j s = proofs s $ fmap snd $ proofState t j
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
@@ -185,7 +185,7 @@ runTacticT t j s = proofs s $ fmap snd $ proofState t j
 --
 -- Note that this version is inherently slower than 'runTacticT', as it needs to continue producing extracts.
 -- Furthermore, it will return all of the 'SuccessfulProof' before the 'PartialProof'.
-runPartialTacticT :: (MonadExtract ext m) => TacticT jdg ext err s m () -> jdg -> s -> m [PartialProof ext s jdg err]
+runPartialTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m [PartialProof ext s jdg err]
 runPartialTacticT t j s = partialProofs s $ fmap snd $ proofState t j
 
 -- | Turn an inference rule that examines the current goal into a tactic.

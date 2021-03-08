@@ -2,6 +2,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -47,8 +48,9 @@ instance IsString Type where
 data Judgement = [(String, Type)] :- Type
   deriving (Show)
 
-instance MonadExtract Term Identity where
+instance MonadExtract Term String Identity where
     hole = pure Hole
+    unsolvableHole _ = pure Hole
 
 type T a = TacticT Judgement Term String Int Identity a
 

@@ -36,13 +36,13 @@ testBatch (batchName, tests) = describe ("laws for: " ++ batchName) $
 
 instance (EqProp ext, EqProp s, EqProp jdg) => EqProp (Proof ext s jdg) where
 
-instance (MonadExtract ext m, EqProp (m [Either err (Proof ext s a)]), Arbitrary s)
+instance (MonadExtract ext err m, EqProp (m [Either err (Proof ext s a)]), Arbitrary s)
       => EqProp (ProofStateT ext ext err s m a) where
   (=-=) a b = property $ do
     s <- arbitrary
     pure $ ((=-=) `on` proofs s) a b
 
-instance ( MonadExtract ext m
+instance ( MonadExtract ext err m
          , Arbitrary jdg
          , EqProp (m [Either err (Proof ext s jdg)])
          , Show s
@@ -54,15 +54,16 @@ instance ( MonadExtract ext m
 
 instance ( Arbitrary jdg
          , EqProp (m [Either err (Proof ext s jdg)])
-         , MonadExtract ext m
+         , MonadExtract ext err m
          , Arbitrary s
          , Show s , Show jdg
          )
       => EqProp (RuleT jdg ext err s m ext) where
   (=-=) = (=-=) `on` rule . const
 
-instance MonadExtract Int Identity where
+instance MonadExtract Int String Identity where
   hole = pure 0
+  unsolvableHole _ = pure 0
 
 instance ( CoArbitrary ext'
          , Arbitrary ext
@@ -175,7 +176,7 @@ rightAltBind m1 m2 m3 =
 
 interleaveMZero
     :: forall m a jdg ext err s
-     . (MonadExtract ext m
+     . (MonadExtract ext err m
        , EqProp (m [Either err (Proof ext s jdg)])
        , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
@@ -187,7 +188,7 @@ interleaveMZero _ m =
 
 interleaveMPlus
     :: forall m a jdg ext err s
-     . (MonadExtract ext m
+     . (MonadExtract ext err m
        , EqProp (m [Either err (Proof ext s jdg)])
        , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
@@ -222,7 +223,7 @@ distribPut _ = property $ do
 
 absorptionPureCommit
     :: forall m a jdg ext err s
-     . (MonadExtract ext m
+     . (MonadExtract ext err m
        , EqProp (m [Either err (Proof ext s jdg)])
        , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
@@ -235,7 +236,7 @@ absorptionPureCommit _ a t =
 
 emptyIdentityCommit
     :: forall m a jdg ext err s
-     . (MonadExtract ext m
+     . (MonadExtract ext err m
        , EqProp (m [Either err (Proof ext s jdg)])
        , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
@@ -247,7 +248,7 @@ emptyIdentityCommit _ t =
 
 failureIdentityCommit
     :: forall m a jdg ext err s
-     . (MonadExtract ext m
+     . (MonadExtract ext err m
        , EqProp (m [Either err (Proof ext s jdg)])
        , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
@@ -260,7 +261,7 @@ failureIdentityCommit _ e t =
 
 -- peekConst
 --     :: forall m jdg ext err s
---      . (MonadExtract ext m
+--      . (MonadExtract ext err m
 --        , EqProp (m [Either err (Proof ext s jdg)])
 --        , Show s , Show jdg
 --        , Arbitrary jdg, Arbitrary s)
