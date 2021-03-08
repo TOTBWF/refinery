@@ -155,6 +155,7 @@ propertyTests = do
     it "pure absorption on commit" $ property $ absorptionPureCommit (undefined :: TacticTest Int)
     it "empty identity on commit" $ property $ emptyIdentityCommit (undefined :: TacticTest Int)
     it "failure identity on commit" $ property $ failureIdentityCommit (undefined :: TacticTest Int)
+    it "commit stuff" $ property $ commitBind (undefined :: TacticTest Int)
     -- it "constant peek" $ property $ peekConst (undefined :: TacticTest ())
 
 leftAltBind
@@ -257,6 +258,21 @@ failureIdentityCommit
     -> Property
 failureIdentityCommit _ e t =
     commit (throwError e) t =-= t
+
+commitBind
+    :: forall m a jdg ext err s
+     . (MonadExtract ext m
+       , EqProp (m [Either err (Proof ext s jdg)])
+       , Show s , Show jdg
+       , Arbitrary jdg, Arbitrary s)
+    => TacticT jdg ext err s m a  -- ^ proxy
+    -> a
+    -> TacticT jdg ext err s m a
+    -> TacticT jdg ext err s m a
+    -> err
+    -> Property
+commitBind _ a t m e =
+  (commit (pure a) t >> m >> throwError e) =-= (m >> throwError e)
 
 -- peekConst
 --     :: forall m jdg ext err s

@@ -66,10 +66,10 @@ newtype TacticT jdg ext err s m a = TacticT { unTacticT :: StateT jdg (ProofStat
            , Monad
            , MonadPlus
            , MonadReader env
-           , MonadError err
+           -- , MonadError err
            , MonadIO
            , MonadThrow
-           , MonadCatch
+           -- , MonadCatch
            , Generic
            )
 
@@ -125,7 +125,7 @@ instance Monad m => Monad (RuleT jdg ext err s m) where
   RuleT (Stateful s)       >>= f = coerce $ Stateful $ fmap (bindAlaCoerce f) . s
   RuleT (Alt p1 p2)        >>= f = coerce $ Alt (bindAlaCoerce f p1) (bindAlaCoerce f p2)
   RuleT (Interleave p1 p2) >>= f = coerce $ Interleave (bindAlaCoerce f p1) (bindAlaCoerce f p2)
-  RuleT (Commit p1 p2) >>= f = coerce $ Commit (bindAlaCoerce f p1) (bindAlaCoerce f p2)
+  -- RuleT (Commit p1 p2 k) >>= f = coerce $ Commit (coerce p1) (coerce p2) $ fmap (bindAlaCoerce f) k
   RuleT Empty              >>= _ = coerce $ Empty
   RuleT (Failure err k)    >>= f = coerce $ Failure err $ fmap (bindAlaCoerce f) k
   RuleT (Axiom e)          >>= f = f e
@@ -142,7 +142,7 @@ instance MonadReader r m => MonadReader r (RuleT jdg ext err s m) where
     local f (RuleT (Stateful s))       = coerce $ Stateful (fmap (localAlaCoerce f) . s)
     local f (RuleT (Alt p1 p2))        = coerce $ Alt (localAlaCoerce f p1) (localAlaCoerce f p2)
     local f (RuleT (Interleave p1 p2)) = coerce $ Interleave (localAlaCoerce f p1) (localAlaCoerce f p2)
-    local f (RuleT (Commit p1 p2)) = coerce $ Commit (localAlaCoerce f p1) (localAlaCoerce f p2)
+    -- local f (RuleT (Commit p1 p2 k)) = coerce $ Commit (localAlaCoerce f p1) (localAlaCoerce f p2)
     local _ (RuleT Empty)              = coerce $ Empty
     local f (RuleT (Failure err k))    = coerce $ Failure err (localAlaCoerce f . k)
     local _ (RuleT (Axiom e))          = coerce $ Axiom e
