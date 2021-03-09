@@ -66,10 +66,10 @@ newtype TacticT jdg ext err s m a = TacticT { unTacticT :: StateT jdg (ProofStat
            , Monad
            , MonadPlus
            , MonadReader env
-           -- , MonadError err
+           , MonadError err
            , MonadIO
            , MonadThrow
-           -- , MonadCatch
+           , MonadCatch
            , Generic
            )
 

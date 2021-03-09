@@ -278,29 +278,29 @@ instance (MonadIO m) => MonadIO (ProofStateT ext ext err s m) where
 instance (MonadThrow m) => MonadThrow (ProofStateT ext ext err s m) where
   throwM = lift . throwM
 
--- instance (MonadCatch m) => MonadCatch (ProofStateT ext ext err s m) where
---     catch (Subgoal goal k) handle = Subgoal goal (flip catch handle . k)
---     catch (Effect m) handle = Effect . catch m $ pure . handle
---     catch (Stateful s) handle = Stateful (fmap (flip catch handle) . s)
---     catch (Alt p1 p2) handle = Alt (catch p1 handle) (catch p2 handle)
---     catch (Interleave p1 p2) handle = Interleave (catch p1 handle) (catch p2 handle)
---     catch (Commit p1 p2) handle = Commit (catch p1 handle) (catch p2 handle)
---     catch Empty _ = Empty
---     catch (Failure err k) handle = Failure err (flip catch handle . k)
---     catch (Axiom e) _ = (Axiom e)
+instance (MonadCatch m) => MonadCatch (ProofStateT ext ext err s m) where
+    catch (Subgoal goal k) handle = Subgoal goal (flip catch handle . k)
+    catch (Effect m) handle = Effect . catch m $ pure . handle
+    catch (Stateful s) handle = Stateful (fmap (flip catch handle) . s)
+    catch (Alt p1 p2) handle = Alt (catch p1 handle) (catch p2 handle)
+    catch (Interleave p1 p2) handle = Interleave (catch p1 handle) (catch p2 handle)
+    catch (Commit p1 p2 k) handle = Commit p1 p2 (\a -> flip catch handle . k a)
+    catch Empty _ = Empty
+    catch (Failure err k) handle = Failure err (flip catch handle . k)
+    catch (Axiom e) _ = (Axiom e)
 
---  -- FIXME: Does catching errors even make sense????
--- instance (Monad m) => MonadError err (ProofStateT ext ext err s m) where
---     throwError err = Failure err Axiom
---     catchError (Subgoal goal k) handle = Subgoal goal (flip catchError handle . k)
---     catchError (Effect m) handle = Effect (fmap (flip catchError handle) m)
---     catchError (Stateful s) handle = Stateful $ fmap (flip catchError handle) . s
---     catchError (Alt p1 p2) handle = catchError p1 handle <|> catchError p2 handle
---     catchError (Interleave p1 p2) handle = Interleave (catchError p1 handle) (catchError p2 handle)
---     catchError (Commit p1 p2) handle = catchError p1 handle <|> catchError p2 handle
---     catchError Empty _ = Empty
---     catchError (Failure err k) handle = applyCont (flip catchError handle . k) $ handle err
---     catchError (Axiom e) _ = Axiom e
+ -- FIXME: Does catching errors even make sense????
+instance (Monad m) => MonadError err (ProofStateT ext ext err s m) where
+    throwError err = Failure err Axiom
+    catchError (Subgoal goal k) handle = Subgoal goal (flip catchError handle . k)
+    catchError (Effect m) handle = Effect (fmap (flip catchError handle) m)
+    catchError (Stateful s) handle = Stateful $ fmap (flip catchError handle) . s
+    catchError (Alt p1 p2) handle = catchError p1 handle <|> catchError p2 handle
+    catchError (Interleave p1 p2) handle = Interleave (catchError p1 handle) (catchError p2 handle)
+    catchError (Commit p1 p2 k) handle = Commit p1 p2 $ \a -> flip catchError handle . k a
+    catchError Empty _ = Empty
+    catchError (Failure err k) handle = applyCont (flip catchError handle . k) $ handle err
+    catchError (Axiom e) _ = Axiom e
 
 instance (MonadReader r m) => MonadReader r (ProofStateT ext ext err s m) where
     ask = lift ask
