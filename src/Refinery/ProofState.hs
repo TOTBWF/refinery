@@ -192,8 +192,8 @@ proofs s p = go s [] p
       go s goals (Interleave p1 p2) = liftA2 (interleave) (go s goals p1) (go s goals p2)
       go s goals (Commit p1 p2 k) = fmap rights (proofs s p1) >>=
         \case
-          [] -> fmap rights (proofs s p2) >>= blarg goals k
-          solns -> blarg goals k solns
+          [] -> fmap rights (proofs s p2) >>= blarg goals p1 k
+          solns -> blarg goals p2 k solns
       go _ _ Empty = pure []
       go _ _ (Failure err _) = pure [throwError err]
       go s goals (Axiom ext) = pure [Right $ Proof ext s goals]
@@ -201,12 +201,13 @@ proofs s p = go s [] p
       blarg
           :: forall a
            . [goal]
+          -> ProofStateT ext ext err s m a
           -> (a -> ext -> ProofStateT ext ext err s m goal)
           -> [Proof ext s a]
           -> m [Either err (Proof ext s goal)]
-      blarg goals k solns =
+      blarg goals p k solns =
         fmap join $ for solns $ \(Proof ext s' as) ->
-          fmap join $ for as $ \a -> go s' goals $ k a ext
+          fmap join $ for as $ \a -> go s' goals $ p >> k a ext
 
 -- | The result of executing 'partialProofs'.
 data PartialProof ext s goal err

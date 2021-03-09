@@ -125,7 +125,7 @@ instance Monad m => Monad (RuleT jdg ext err s m) where
   RuleT (Stateful s)       >>= f = coerce $ Stateful $ fmap (bindAlaCoerce f) . s
   RuleT (Alt p1 p2)        >>= f = coerce $ Alt (bindAlaCoerce f p1) (bindAlaCoerce f p2)
   RuleT (Interleave p1 p2) >>= f = coerce $ Interleave (bindAlaCoerce f p1) (bindAlaCoerce f p2)
-  -- RuleT (Commit p1 p2 k) >>= f = coerce $ Commit (coerce p1) (coerce p2) $ fmap (bindAlaCoerce f) k
+  RuleT (Commit p1 p2 k)   >>= f = RuleT $ Commit p1 p2 $ _
   RuleT Empty              >>= _ = coerce $ Empty
   RuleT (Failure err k)    >>= f = coerce $ Failure err $ fmap (bindAlaCoerce f) k
   RuleT (Axiom e)          >>= f = f e
