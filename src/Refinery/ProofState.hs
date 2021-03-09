@@ -63,7 +63,7 @@ data ProofStateT ext' ext err s m goal
     -- This is useful if the first argument produces potentially infinite results.
     | forall a. Commit (ProofStateT ext' ext err s m a)
                        (ProofStateT ext' ext err s m a)
-                       (a -> ProofStateT ext' ext err s m goal)
+                       (a -> ext' -> ProofStateT ext' ext err s m goal)
     -- ^ 'Commit' runs the first proofstate, and only runs the second if the first
     -- does not produce any successful results.
     | Empty
@@ -84,7 +84,7 @@ instance (Show goal, Show err, Show ext, Show (m (ProofStateT ext' ext err s m g
   show (Stateful _) = "(Stateful <s>)"
   show (Alt p1 p2) = "(Alt " <> show p1 <> " " <> show p2 <> ")"
   show (Interleave p1 p2) = "(Interleave " <> show p1 <> " " <> show p2 <> ")"
-  -- show (Commit p1 p2) = "(Commit " <> show p1 <> " " <> show p2 <> ")"
+  show (Commit _p1 _p2 _) = "(Commit <p1> <p2> <k>)"
   show Empty = "Empty"
   show (Failure err _) = "(Failure " <> show err <> " <k>)"
   show (Axiom ext) = "(Axiom " <> show ext <> ")"
@@ -95,7 +95,7 @@ instance Functor m => Functor (ProofStateT ext' ext err s m) where
     fmap f (Stateful s) = Stateful $ fmap (fmap f) . s
     fmap f (Alt p1 p2) = Alt (fmap f p1) (fmap f p2)
     fmap f (Interleave p1 p2) = Interleave (fmap f p1) (fmap f p2)
-    fmap f (Commit p1 p2 k) = Commit p1 p2 $ fmap f . k
+    fmap f (Commit p1 p2 k) = Commit p1 p2 $ \a -> fmap f . k a
     fmap _ Empty = Empty
     fmap f (Failure err k) = Failure err (fmap f . k)
     fmap _ (Axiom ext) = Axiom ext
@@ -110,7 +110,7 @@ instance MFunctor (ProofStateT ext' ext err s) where
   hoist nat (Stateful f)    = Stateful $ fmap (hoist nat) . f
   hoist nat (Alt p1 p2)   = Alt (hoist nat p1) (hoist nat p2)
   hoist nat (Interleave p1 p2)   = Interleave (hoist nat p1) (hoist nat p2)
-  hoist nat (Commit p1 p2 k)   = Commit (hoist nat p1) (hoist nat p2) $ fmap (hoist nat) k
+  hoist nat (Commit p1 p2 k)   = Commit (hoist nat p1) (hoist nat p2) $ \a -> fmap (hoist nat) $ k a
   hoist nat (Failure err k) = Failure err $ fmap (hoist nat) k
   hoist _ Empty         = Empty
   hoist _ (Axiom ext)   = Axiom ext
@@ -125,7 +125,7 @@ applyCont k (Effect m) = Effect (fmap (applyCont k) m)
 applyCont k (Stateful s) = Stateful $ fmap (applyCont k) . s
 applyCont k (Alt p1 p2) = Alt (applyCont k p1) (applyCont k p2)
 applyCont k (Interleave p1 p2) = Interleave (applyCont k p1) (applyCont k p2)
-applyCont k (Commit p1 p2 k') = Commit p1 p2 (applyCont k . k')
+applyCont k (Commit p1 p2 k') = Commit p1 p2 (\a -> applyCont k . k' a)
 applyCont _ Empty = Empty
 applyCont k (Failure err k') = Failure err (applyCont k . k')
 applyCont k (Axiom ext) = k ext
@@ -137,7 +137,7 @@ instance Functor m => Monad (ProofStateT ext ext err s m) where
     (Stateful s)  >>= f = Stateful $ fmap (>>= f) . s
     (Alt p1 p2)   >>= f = Alt (p1 >>= f) (p2 >>= f)
     (Interleave p1 p2)   >>= f = Interleave (p1 >>= f) (p2 >>= f)
-    (Commit p1 p2 k)   >>= f = Commit p1 p2 (f <=< k)
+    (Commit p1 p2 k)   >>= f = Commit p1 p2 (\a -> f <=< k a)
     (Failure err k) >>= f = Failure err (f <=< k)
     Empty         >>= _ = Empty
     (Axiom ext)   >>= _ = Axiom ext
@@ -201,12 +201,12 @@ proofs s p = go s [] p
       blarg
           :: forall a
            . [goal]
-          -> (a -> ProofStateT ext ext err s m goal)
+          -> (a -> ext -> ProofStateT ext ext err s m goal)
           -> [Proof ext s a]
           -> m [Either err (Proof ext s goal)]
       blarg goals k solns =
-        fmap join $ for solns $ \(Proof _ s' as) ->
-          fmap join $ for as $ \a -> go s' goals $ k a
+        fmap join $ for solns $ \(Proof ext s' as) ->
+          fmap join $ for as $ \a -> go s' goals $ k a ext
 
 -- | The result of executing 'partialProofs'.
 data PartialProof ext s goal err
@@ -222,39 +222,55 @@ isSuccessful :: PartialProof ext s goal err -> Bool
 isSuccessful SuccessfulProof {} = True
 isSuccessful PartialProof {} = False
 
----- | Interpret a 'ProofStateT' into a list of (possibly incomplete) extracts.
----- This function will continue producing an extract when it encounters a 'Failure', leaving
----- a hole in the extract in it's place. If you want the extraction to terminate when you encounter an error,
----- you should use 'proofs'.
-----
----- This function will return all the 'SuccessfulProof' before the 'PartialProof'.
---partialProofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [PartialProof ext s goal err]
---partialProofs s pf = go s [] [] pf
---    where
---      prioritizing :: ([PartialProof ext s goal err] -> [PartialProof ext s goal err] -> [PartialProof ext s goal err]) -> [PartialProof ext s goal err] -> [PartialProof ext s goal err] -> [PartialProof ext s goal err]
---      prioritizing combine pps pps' =
---          let (successes, failures) = partition isSuccessful (combine pps pps')
---          in successes <> failures
+-- | Interpret a 'ProofStateT' into a list of (possibly incomplete) extracts.
+-- This function will continue producing an extract when it encounters a 'Failure', leaving
+-- a hole in the extract in it's place. If you want the extraction to terminate when you encounter an error,
+-- you should use 'proofs'.
+--
+-- This function will return all the 'SuccessfulProof' before the 'PartialProof'.
+partialProofs :: forall ext err s m goal. (MonadExtract ext m) => s -> ProofStateT ext ext err s m goal -> m [PartialProof ext s goal err]
+partialProofs s pf = go s [] [] pf
+    where
+      prioritizing :: ([PartialProof ext s goal err] -> [PartialProof ext s goal err] -> [PartialProof ext s goal err]) -> [PartialProof ext s goal err] -> [PartialProof ext s goal err] -> [PartialProof ext s goal err]
+      prioritizing combine pps pps' =
+          let (successes, failures) = partition isSuccessful (combine pps pps')
+          in successes <> failures
 
---      go :: s -> [goal] -> [err] -> ProofStateT ext ext err s m goal -> m [PartialProof ext s goal err]
---      go s goals errs (Subgoal goal k) = do
---         h <- hole
---         go s (goals ++ [goal]) errs $ k h
---      go s goals errs (Effect m) = go s goals errs =<< m
---      go s goals errs (Stateful f) =
---          let (s', p) = f s
---          in go s' goals errs p
---      go s goals errs (Alt p1 p2) = liftA2 (prioritizing (<>)) (go s goals errs p1) (go s goals errs p2)
---      go s goals errs (Interleave p1 p2) = liftA2 (prioritizing interleave) (go s goals errs p1) (go s goals errs p2)
---      go s goals errs (Commit p1 p2) = go s goals errs p1 >>= \case
---          (filter isSuccessful -> []) -> go s goals errs p2
---          solns -> pure solns
---      go _ _ _ Empty = pure []
---      go s goals errs (Failure err k) = do
---          h <- hole
---          go s goals (errs ++ [err]) $ k h
---      go s goals [] (Axiom ext) = pure [SuccessfulProof ext s goals]
---      go s goals errs (Axiom ext) = pure [PartialProof ext s goals errs]
+      go :: s -> [goal] -> [err] -> ProofStateT ext ext err s m goal -> m [PartialProof ext s goal err]
+      go s goals errs (Subgoal goal k) = do
+         h <- hole
+         go s (goals ++ [goal]) errs $ k h
+      go s goals errs (Effect m) = go s goals errs =<< m
+      go s goals errs (Stateful f) =
+          let (s', p) = f s
+          in go s' goals errs p
+      go s goals errs (Alt p1 p2) = liftA2 (prioritizing (<>)) (go s goals errs p1) (go s goals errs p2)
+      go s goals errs (Interleave p1 p2) = liftA2 (prioritizing interleave) (go s goals errs p1) (go s goals errs p2)
+      go s goals errs (Commit p1 p2 k) = fmap (filter isSuccessful) (partialProofs s p1) >>=
+        \case
+          [] -> fmap (filter isSuccessful) (partialProofs s p2) >>= blarg goals errs k
+          solns -> blarg goals errs k solns
+      go _ _ _ Empty = pure []
+      go s goals errs (Failure err k) = do
+          h <- hole
+          go s goals (errs ++ [err]) $ k h
+      go s goals [] (Axiom ext) = pure [SuccessfulProof ext s goals]
+      go s goals errs (Axiom ext) = pure [PartialProof ext s goals errs]
+
+      blarg
+          :: forall a
+           . [goal]
+          -> [err]
+          -> (a -> ext -> ProofStateT ext ext err s m goal)
+          -> [PartialProof ext s a err]
+          -> m [PartialProof ext s goal err]
+      blarg goals errs k solns =
+        fmap join $ for solns $ \case
+          SuccessfulProof ext s' as ->
+            fmap join $ for as $ \a -> go s' goals errs $ k a ext
+          PartialProof ext s' as errs' ->
+            fmap join $ for as $ \a -> go s' goals (errs <> errs') $ k a ext
+
 
 instance (MonadIO m) => MonadIO (ProofStateT ext ext err s m) where
   liftIO = lift . liftIO
@@ -293,7 +309,7 @@ instance (MonadReader r m) => MonadReader r (ProofStateT ext ext err s m) where
     local f (Stateful s) = Stateful (fmap (local f) . s)
     local f (Alt p1 p2) = Alt (local f p1) (local f p2)
     local f (Interleave p1 p2) = Interleave (local f p1) (local f p2)
-    local f (Commit p1 p2 k) = Commit p1 p2 (local f . k)
+    local f (Commit p1 p2 k) = Commit p1 p2 (\a -> local f . k a)
     local _ Empty = Empty
     local f (Failure err k) = Failure err (local f . k)
     local _ (Axiom e) = Axiom e
@@ -317,7 +333,7 @@ subgoals fs (Effect m) = Effect (fmap (subgoals fs) m)
 subgoals fs (Stateful s) = Stateful (fmap (subgoals fs) . s)
 subgoals fs (Alt p1 p2) = Alt (subgoals fs p1) (subgoals fs p2)
 subgoals fs (Interleave p1 p2) = Interleave (subgoals fs p1) (subgoals fs p2)
--- subgoals fs (Commit p1 p2 k) = Commit (subgoals fs p1) (subgoals fs p2)
+subgoals fs (Commit p1 p2 k) = Commit p1 p2 $ \a -> subgoals fs . k a
 subgoals fs (Failure err k) = Failure err (subgoals fs . k)
 subgoals _ Empty = Empty
 subgoals _ (Axiom ext) = Axiom ext
@@ -329,7 +345,10 @@ mapExtract into out = \case
     Stateful s -> Stateful (fmap (mapExtract into out) . s)
     Alt t1 t2 -> Alt (mapExtract into out t1) (mapExtract into out t2)
     Interleave t1 t2 -> Interleave (mapExtract into out t1) (mapExtract into out t2)
-    Commit t1 t2 k -> Commit (mapExtract into out t1) (mapExtract into out t2) $ mapExtract into out . k
+    Commit t1 t2 k ->
+      Commit
+        (mapExtract into out t1)
+        (mapExtract into out t2) $ \a -> mapExtract into out . k a . out
     Empty -> Empty
     Failure err k -> Failure err $ mapExtract into out . k . out
     Axiom ext -> Axiom $ into ext
@@ -341,7 +360,7 @@ mapExtract' into = \case
     Stateful s -> Stateful (fmap (mapExtract' into) . s)
     Alt t1 t2 -> Alt (mapExtract' into t1) (mapExtract' into t2)
     Interleave t1 t2 -> Interleave (mapExtract' into t1) (mapExtract' into t2)
-    Commit t1 t2 k -> Commit (mapExtract' into t1) (mapExtract' into t2) $ mapExtract' into . k
+    Commit t1 t2 k -> Commit (mapExtract' into t1) (mapExtract' into t2) $ \a -> mapExtract' into . k a
     Empty -> Empty
     Failure err k -> Failure err $ mapExtract' into . k
     Axiom ext -> Axiom $ into ext
