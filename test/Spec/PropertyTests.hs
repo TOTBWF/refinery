@@ -15,7 +15,6 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.State.Strict (StateT (..))
 import Control.Monad.State.Class
-import Control.Monad.Error.Class
 import Data.Function
 import Data.Functor.Identity
 import Data.Monoid (Sum (..))
@@ -36,7 +35,7 @@ testBatch (batchName, tests) = describe ("laws for: " ++ batchName) $
 
 instance (EqProp ext, EqProp s, EqProp jdg) => EqProp (Proof ext s jdg) where
 
-instance (MonadExtract ext err m, EqProp (m [Either err (Proof ext s a)]), Arbitrary s)
+instance (MonadExtract ext err m, EqProp (m (Either [err] [Proof ext s a])), Arbitrary s)
       => EqProp (ProofStateT ext ext err s m a) where
   (=-=) a b = property $ do
     s <- arbitrary
@@ -44,7 +43,7 @@ instance (MonadExtract ext err m, EqProp (m [Either err (Proof ext s a)]), Arbit
 
 instance ( MonadExtract ext err m
          , Arbitrary jdg
-         , EqProp (m [Either err (Proof ext s jdg)])
+         , EqProp (m (Either [err] [Proof ext s jdg]))
          , Show s
          , Arbitrary s
          , Show jdg
@@ -53,7 +52,7 @@ instance ( MonadExtract ext err m
   (=-=) = (=-=) `on` runTacticT . (() <$)
 
 instance ( Arbitrary jdg
-         , EqProp (m [Either err (Proof ext s jdg)])
+         , EqProp (m (Either [err] [Proof ext s jdg]))
          , MonadExtract ext err m
          , Arbitrary s
          , Show s , Show jdg
@@ -81,7 +80,6 @@ instance ( CoArbitrary ext'
       , Effect     <$> arbitrary
       , Interleave <$> decayArbitrary 2 <*> decayArbitrary 2
       , Alt        <$> decayArbitrary 2 <*> decayArbitrary 2
-      , Commit     <$> decayArbitrary 2 <*> decayArbitrary 2
       , Stateful   <$> arbitrary
       , Failure    <$> arbitrary <*> decayArbitrary 2
       ] ++ small
@@ -153,9 +151,6 @@ propertyTests = do
     it "interleave - mzero" $ property $ interleaveMZero (undefined :: TacticTest Int)
     it "interleave - mplus" $ property $ interleaveMPlus (undefined :: TacticTest Int)
     it "distrib put over <|>" $ property $ distribPut (undefined :: TacticTest ())
-    it "pure absorption on commit" $ property $ absorptionPureCommit (undefined :: TacticTest Int)
-    it "empty identity on commit" $ property $ emptyIdentityCommit (undefined :: TacticTest Int)
-    it "failure identity on commit" $ property $ failureIdentityCommit (undefined :: TacticTest Int)
     -- it "constant peek" $ property $ peekConst (undefined :: TacticTest ())
 
 leftAltBind
@@ -177,7 +172,7 @@ rightAltBind m1 m2 m3 =
 interleaveMZero
     :: forall m a jdg ext err s
      . (MonadExtract ext err m
-       , EqProp (m [Either err (Proof ext s jdg)])
+       , EqProp (m (Either [err] [Proof ext s jdg]))
        , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
@@ -189,7 +184,7 @@ interleaveMZero _ m =
 interleaveMPlus
     :: forall m a jdg ext err s
      . (MonadExtract ext err m
-       , EqProp (m [Either err (Proof ext s jdg)])
+       , EqProp (m (Either [err] [Proof ext s jdg]))
        , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
@@ -220,44 +215,6 @@ distribPut _ = property $ do
     counterexample (show m1) $
     counterexample (show m2) $
       (put s >> (m1 <|> m2)) =-= ((put s >> m1) <|> (put s >> m2))
-
-absorptionPureCommit
-    :: forall m a jdg ext err s
-     . (MonadExtract ext err m
-       , EqProp (m [Either err (Proof ext s jdg)])
-       , Show s , Show jdg
-       , Arbitrary jdg, Arbitrary s)
-    => TacticT jdg ext err s m a  -- ^ proxy
-    -> a
-    -> TacticT jdg ext err s m a
-    -> Property
-absorptionPureCommit _ a t =
-    commit (pure a) t =-= pure a
-
-emptyIdentityCommit
-    :: forall m a jdg ext err s
-     . (MonadExtract ext err m
-       , EqProp (m [Either err (Proof ext s jdg)])
-       , Show s , Show jdg
-       , Arbitrary jdg, Arbitrary s)
-    => TacticT jdg ext err s m a  -- ^ proxy
-    -> TacticT jdg ext err s m a
-    -> Property
-emptyIdentityCommit _ t =
-    commit empty t =-= t
-
-failureIdentityCommit
-    :: forall m a jdg ext err s
-     . (MonadExtract ext err m
-       , EqProp (m [Either err (Proof ext s jdg)])
-       , Show s , Show jdg
-       , Arbitrary jdg, Arbitrary s)
-    => TacticT jdg ext err s m a  -- ^ proxy
-    -> err
-    -> TacticT jdg ext err s m a
-    -> Property
-failureIdentityCommit _ e t =
-    commit (throwError e) t =-= t
 
 -- peekConst
 --     :: forall m jdg ext err s
