@@ -1,6 +1,6 @@
 # Refinery
 
-[![Hackage](http://img.shields.io/hackage/v/refinery.svg)]
+[Hackage](http://img.shields.io/hackage/v/refinery.svg)
 
 
 `refinery` provides a series of language-independent building blocks for creating automated, type directed program synthesis tools.
