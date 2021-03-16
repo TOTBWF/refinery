@@ -62,6 +62,11 @@ import Refinery.ProofState
 -- One of the most important things about this type is it's 'Monad' instance. @t1 >> t2@
 -- Will execute @t1@ against the current goal, and then execute @t2@ on _all_ of the subgoals generated
 -- by @t2@.
+--
+-- This Monad instance is lawful, and has been tested thouroughly, and a version of it has been formally verified in Agda.
+-- _However_, just because it is correct doesn't mean that it lines up with your intuitions of how Monads behave!
+-- In practice, it feels like a combination of the Non-Determinisitic Monads and some of the Time Travelling ones.
+-- That doesn't mean that it's impossible to understand, just that it may push the boundaries of you intuitions.
 newtype TacticT jdg ext err s m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext ext err s m) a }
   deriving ( Functor
            , Applicative

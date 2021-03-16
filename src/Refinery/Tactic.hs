@@ -22,7 +22,7 @@ module Refinery.Tactic
   ( TacticT
   , runTacticT
   , runPartialTacticT
-  , solutions
+  , evalTacticT
   , Proof(..)
   , PartialProof(..)
   -- * Tactic Combinators
@@ -59,6 +59,7 @@ module Refinery.Tactic
   ) where
 
 import Data.Bifunctor
+import qualified Data.Monoid as Mon
 
 import Control.Applicative
 import Control.Monad.Except
@@ -87,13 +88,16 @@ t1 <%> t2 = tactic $ \j -> Interleave (proofState t1 j) (proofState t2 j)
 try :: (Monad m) => TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
 try t = t <|> pure ()
 
--- | @commit t1 t2@ will run @t1@, and then run @t2@ only if @t1@ failed to produce any successes.
+-- | @commit t1 t2@ will run @t1@, and then run @t2@ only if @t1@ (and all subsequent tactics) failed to produce any successes.
 --
 -- NOTE: @commit@ does have some sneaky semantics that you have to be aware of. Specifically, it interacts a bit
 -- surprisingly with '>>='. Namely, the following algebraic law holds
 -- @
 --     commit t1 t2 >>= f = commit (t1 >>= f) (t2 >>= f)
 -- @
+-- For instance, if you have something like @commit t1 t2 >>= somethingThatMayFail@, then this
+-- law implies that this is the same as @commit (t1 >>= somethingThatMayFail) (t2 >>= somethingThatMayFail)@,
+-- which means that we might execute @t2@ _even if_ @t1@ seemingly succeeds.
 commit :: TacticT jdg ext err s m a -> TacticT jdg ext err s m a -> TacticT jdg ext err s m a
 commit t1 t2 = tactic $ \j -> Commit (proofState t1 j) (proofState t2 j)
 
@@ -162,8 +166,8 @@ gather t f = tactic $ \j -> do
     s <- get
     results <- lift $ proofs s $ proofState t j
     case results of
-      Left errs -> msum $ fmap (\err -> Failure err Axiom) errs
-      Right pfs -> msum $ fmap (\(Proof _ _ jdgs) -> proofState (f jdgs) j) pfs
+      Left errs -> Mon.getAlt $ foldMap (\err -> Mon.Alt $ Failure err Axiom) errs
+      Right pfs -> Mon.getAlt $ foldMap (\(Proof _ _ jdgs) -> Mon.Alt $ proofState (f jdgs) j) pfs
 
 -- | @pruning t f@ runs the tactic @t@, and then applies a predicate to all of the generated subgoals.
 pruning
@@ -214,8 +218,8 @@ runTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s
 runTacticT t j s = proofs s $ fmap snd $ proofState t j
 
 -- | Run a tactic, and get just the list of extracts, ignoring any other information.
-solutions :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m [ext]
-solutions t j s = either (const []) (map pf_extract) <$> runTacticT t j s
+evalTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m [ext]
+evalTacticT t j s = either (const []) (map pf_extract) <$> runTacticT t j s
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 -- Note that this function will produce a so called "Partial Proof". This means that we no longer backtrack on errors,

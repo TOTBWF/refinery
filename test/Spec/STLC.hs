@@ -91,4 +91,4 @@ jdg = ([] :- ("a" :-> "b" :-> (TPair "a" "b")))
 stlcTests :: Spec
 stlcTests = do
     describe "Simply Typed Lambda Calculus" $ do
-        it "auto synthesize a solution" $ (runIdentity $ solutions auto jdg 0) `shouldBe` [(Lam "0" $ Lam "1" $ Pair (Var "0") (Var "1"))]
+        it "auto synthesize a solution" $ (runIdentity $ evalTacticT auto jdg 0) `shouldBe` [(Lam "0" $ Lam "1" $ Pair (Var "0") (Var "1"))]
