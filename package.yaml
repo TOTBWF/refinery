@@ -28,8 +28,6 @@ dependencies:
 ghc-options:
   - -Wall
   - -Wredundant-constraints
-  - -fmax-relevant-binds=0
-  - -fno-show-valid-hole-fits
 
 library:
   source-dirs: src
