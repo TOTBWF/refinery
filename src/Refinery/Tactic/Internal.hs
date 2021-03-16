@@ -58,6 +58,10 @@ import Refinery.ProofState
 -- * @s@   - The state type.
 -- * @m@   - The base monad.
 -- * @a@   - The return value. This to make @'TacticT'@ a monad, and will always be @'()'@
+--
+-- One of the most important things about this type is it's 'Monad' instance. @t1 >> t2@
+-- Will execute @t1@ against the current goal, and then execute @t2@ on _all_ of the subgoals generated
+-- by @t2@.
 newtype TacticT jdg ext err s m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext ext err s m) a }
   deriving ( Functor
            , Applicative
