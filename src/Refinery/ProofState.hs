@@ -106,6 +106,8 @@ instance MFunctor (ProofStateT ext' ext err s) where
   hoist _ Empty         = Empty
   hoist _ (Axiom ext)   = Axiom ext
 
+-- | Apply a continuation that creates new proof states from an extract
+-- onto all of the 'Axiom' constructors of a 'ProofStateT'.
 applyCont
     :: (Functor m)
     => (ext -> ProofStateT ext' ext err s m a)
@@ -167,7 +169,15 @@ instance (MonadExtract ext err m, Monoid w) => MonadExtract ext err (LW.WriterT 
 instance (MonadExtract ext err m, Monoid w) => MonadExtract ext err (SW.WriterT w m)
 instance (MonadExtract ext err m) => MonadExtract ext err (ExceptT err m)
 
-data Proof s goal ext = Proof { pf_extract :: ext, pf_state :: s, pf_unsolvedGoals :: [goal] }
+-- | Represents a single result of the execution of some tactic.
+data Proof s goal ext = Proof
+    { pf_extract :: ext
+    -- ^ The extract of the tactic.
+    , pf_state :: s
+    -- ^ The state at the end of tactic execution.
+    , pf_unsolvedGoals :: [goal]
+    -- ^ All the goals that were still unsolved by the end of tactic execution.
+    }
     deriving (Eq, Show, Generic)
 
 -- | Interleave two lists together.
