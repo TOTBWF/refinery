@@ -26,6 +26,7 @@ module Refinery.Tactic
   , (<@>)
   , (<%>)
   , try
+  , commit
   , many_
   , some_
   , choice
@@ -82,6 +83,16 @@ t1 <%> t2 = tactic $ \j -> Interleave (proofState t1 j) (proofState t2 j)
 -- | Tries to run a tactic, backtracking on failure
 try :: (Monad m) => TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
 try t = t <|> pure ()
+
+-- | @commit t1 t2@ will run @t1@, and then run @t2@ only if @t1@ failed to produce any successes.
+--
+-- NOTE: @commit@ does have some sneaky semantics that you have to be aware of. Specifically, it interacts a bit
+-- surprisingly with '>>='. Namely, the following algebraic law holds
+-- @
+--     commit t1 t2 >>= f = commit (t1 >>= f) (t2 >>= f)
+-- @
+commit :: TacticT jdg ext err s m a -> TacticT jdg ext err s m a -> TacticT jdg ext err s m a
+commit t1 t2 = tactic $ \j -> Commit (proofState t1 j) (proofState t2 j)
 
 -- | Runs a tactic 0 or more times until it fails.
 -- Note that 'many_' is almost always the right choice over 'many'.

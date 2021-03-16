@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 {-# LANGUAGE DefaultSignatures      #-}
@@ -59,6 +60,9 @@ data ProofStateT ext' ext err s m goal
     | Interleave (ProofStateT ext' ext err s m goal) (ProofStateT ext' ext err s m goal)
     -- ^ Similar to 'Alt', but will interleave the results, rather than just appending them.
     -- This is useful if the first argument produces potentially infinite results.
+    | Commit (ProofStateT ext' ext err s m goal) (ProofStateT ext' ext err s m goal)
+     -- ^ 'Commit' runs the first proofstate, and only runs the second if the first
+     -- does not produce any successful results.
     | Empty
     -- ^ Silent failure. Always causes a backtrack, unlike 'Failure'.
     | Failure err (ext' -> ProofStateT ext' ext err s m goal)
@@ -80,6 +84,7 @@ instance (Show goal, Show err, Show ext, Show (m (ProofStateT ext' ext err s m g
   show (Stateful _) = "(Stateful <s>)"
   show (Alt p1 p2) = "(Alt " <> show p1 <> " " <> show p2 <> ")"
   show (Interleave p1 p2) = "(Interleave " <> show p1 <> " " <> show p2 <> ")"
+  show (Commit p1 p2) = "(Commit " <> show p1 <> " " <> show p2 <> ")"
   show Empty = "Empty"
   show (Failure err _) = "(Failure " <> show err <> " <k>)"
   show (Handle p _) = "(Handle " <> show p <> " <h>)"
@@ -91,6 +96,7 @@ instance Functor m => Functor (ProofStateT ext' ext err s m) where
     fmap f (Stateful s) = Stateful $ fmap (fmap f) . s
     fmap f (Alt p1 p2) = Alt (fmap f p1) (fmap f p2)
     fmap f (Interleave p1 p2) = Interleave (fmap f p1) (fmap f p2)
+    fmap f (Commit p1 p2) = Commit (fmap f p1) (fmap f p2)
     fmap _ Empty = Empty
     fmap f (Failure err k) = Failure err (fmap f . k)
     fmap f (Handle p h) = Handle (fmap f p) h
@@ -106,6 +112,7 @@ instance MFunctor (ProofStateT ext' ext err s) where
   hoist nat (Stateful f)    = Stateful $ fmap (hoist nat) . f
   hoist nat (Alt p1 p2)   = Alt (hoist nat p1) (hoist nat p2)
   hoist nat (Interleave p1 p2)   = Interleave (hoist nat p1) (hoist nat p2)
+  hoist nat (Commit p1 p2)   = Commit (hoist nat p1) (hoist nat p2)
   hoist nat (Failure err k) = Failure err $ fmap (hoist nat) k
   hoist nat (Handle p h) = Handle (hoist nat p) (nat . h)
   hoist _ Empty         = Empty
@@ -121,6 +128,7 @@ applyCont k (Effect m) = Effect (fmap (applyCont k) m)
 applyCont k (Stateful s) = Stateful $ fmap (applyCont k) . s
 applyCont k (Alt p1 p2) = Alt (applyCont k p1) (applyCont k p2)
 applyCont k (Interleave p1 p2) = Interleave (applyCont k p1) (applyCont k p2)
+applyCont k (Commit p1 p2) = Commit (applyCont k p1) (applyCont k p2)
 applyCont _ Empty = Empty
 applyCont k (Failure err k') = Failure err (applyCont k . k')
 applyCont k (Handle p h) = Handle (applyCont k p) h
@@ -128,15 +136,16 @@ applyCont k (Axiom ext) = k ext
 
 instance Functor m => Monad (ProofStateT ext ext err s m) where
     return goal = Subgoal goal Axiom
-    (Subgoal a k) >>= f = applyCont (f <=< k) (f a)
-    (Effect m)    >>= f = Effect (fmap (>>= f) m)
-    (Stateful s)  >>= f = Stateful $ fmap (>>= f) . s
-    (Alt p1 p2)   >>= f = Alt (p1 >>= f) (p2 >>= f)
-    (Interleave p1 p2)   >>= f = Interleave (p1 >>= f) (p2 >>= f)
-    (Failure err k) >>= f = Failure err (f <=< k)
-    (Handle p h) >>= f = Handle (p >>= f) h
-    Empty         >>= _ = Empty
-    (Axiom ext)   >>= _ = Axiom ext
+    (Subgoal a k)      >>= f = applyCont (f <=< k) (f a)
+    (Effect m)         >>= f = Effect (fmap (>>= f) m)
+    (Stateful s)       >>= f = Stateful $ fmap (>>= f) . s
+    (Alt p1 p2)        >>= f = Alt (p1 >>= f) (p2 >>= f)
+    (Interleave p1 p2) >>= f = Interleave (p1 >>= f) (p2 >>= f)
+    (Commit p1 p2)     >>= f = Commit (p1 >>= f) (p2 >>= f)
+    (Failure err k)    >>= f = Failure err (f <=< k)
+    (Handle p h)       >>= f = Handle (p >>= f) h
+    Empty              >>= _ = Empty
+    (Axiom ext)        >>= _ = Axiom ext
 
 instance MonadTrans (ProofStateT ext ext err s) where
     lift m = Effect (fmap pure m)
@@ -203,6 +212,9 @@ proofs s p = go s [] pure p
           in go s' goals handlers p
       go s goals handlers (Alt p1 p2) = liftA2 (prioritizing (<>)) (go s goals handlers p1) (go s goals handlers p2)
       go s goals handlers (Interleave p1 p2) = liftA2 (prioritizing interleave) (go s goals handlers p1) (go s goals handlers p2)
+      go s goals handlers (Commit p1 p2) = go s goals handlers p1 >>= \case
+          Right solns | not (null solns) -> pure $ Right solns
+          _                              -> go s goals handlers p2
       go _ _ _ Empty = pure $ Left []
       go _ _ handlers (Failure err _) = do
           annErr <- handlers err
@@ -241,6 +253,9 @@ partialProofs s pf = go s [] [] pure pf
           in go s' goals errs handlers p
       go s goals errs handlers (Alt p1 p2) = liftA2 (prioritizing (<>)) (go s goals errs handlers p1) (go s goals errs handlers p2)
       go s goals errs handlers (Interleave p1 p2) = liftA2 (prioritizing interleave) (go s goals errs handlers p1) (go s goals errs handlers p2)
+      go s goals errs handlers (Commit p1 p2) = go s goals errs handlers p1 >>= \case
+          Right solns | not (null solns) -> pure $ Right solns
+          _                              -> go s goals errs handlers p2
       go _ _ _ _ Empty = pure $ Left []
       go s goals errs handlers (Failure err k) = do
           annErr <- handlers err
@@ -277,6 +292,7 @@ subgoals fs (Effect m) = Effect (fmap (subgoals fs) m)
 subgoals fs (Stateful s) = Stateful (fmap (subgoals fs) . s)
 subgoals fs (Alt p1 p2) = Alt (subgoals fs p1) (subgoals fs p2)
 subgoals fs (Interleave p1 p2) = Interleave (subgoals fs p1) (subgoals fs p2)
+subgoals fs (Commit p1 p2) = Commit (subgoals fs p1) (subgoals fs p2)
 subgoals fs (Failure err k) = Failure err (subgoals fs . k)
 subgoals fs (Handle p h) = Handle (subgoals fs p) h
 subgoals _ Empty = Empty
@@ -291,6 +307,7 @@ mapExtract into out (Effect m) = Effect (fmap (mapExtract into out) m)
 mapExtract into out (Stateful s) = Stateful (fmap (mapExtract into out) . s)
 mapExtract into out (Alt p1 p2) = Alt (mapExtract into out p1) (mapExtract into out p2)
 mapExtract into out (Interleave p1 p2) = Interleave (mapExtract into out p1) (mapExtract into out p2)
+mapExtract into out (Commit p1 p2) = Commit (mapExtract into out p1) (mapExtract into out p2)
 mapExtract _ _ Empty = Empty
 mapExtract into out (Failure err k) = Failure err (mapExtract into out . k . into)
 mapExtract into out (Handle p h) = Handle (mapExtract into out p) h
