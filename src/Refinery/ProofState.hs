@@ -1,28 +1,28 @@
-{-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 {-# LANGUAGE DefaultSignatures      #-}
 {-# LANGUAGE DeriveGeneric          #-}
 {-# LANGUAGE DerivingStrategies     #-}
-{-# LANGUAGE FlexibleContexts       #-}
 {-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE LambdaCase             #-}
 {-# LANGUAGE MultiParamTypeClasses  #-}
-{-# LANGUAGE TypeFamilies           #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
+{-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE UndecidableInstances   #-}
 
 -----------------------------------------------------------------------------
--- |
+-- | The datatype that drives both Rules and Tactics
+--
+-- If you just want to build tactics, you probably want to use 'Refinery.Tactic' instead.
+-- However, if you need to get involved in the core of the library, this is the place to start.
+--
 -- Module      :  Refinery.ProofState
 -- Copyright   :  (c) Reed Mullanix 2019
 -- License     :  BSD-style
 -- Maintainer  :  reedmullanix@gmail.com
 --
 --
-{-# LANGUAGE RankNTypes #-}
 module Refinery.ProofState
 where
 
@@ -35,7 +35,6 @@ import qualified Control.Monad.Writer.Strict as SW
 import           Control.Monad.State
 import           Control.Monad.Morph
 import           Control.Monad.Reader
-import           Data.List
 
 import           GHC.Generics
 
@@ -68,6 +67,9 @@ data ProofStateT ext' ext err s m goal
     -- return an error in the result of 'proofs'.
     -- In the second, we treat this as a sort of "unsolvable subgoal", and call the
     -- continuation with a hole.
+    | Handle (ProofStateT ext' ext err s m goal) (err -> m err)
+    -- ^ An installed error handler. These allow us to add annotations to errors,
+    -- or run effects.
     | Axiom ext
     -- ^ Represents a simple extract.
     deriving stock (Generic)
@@ -80,6 +82,7 @@ instance (Show goal, Show err, Show ext, Show (m (ProofStateT ext' ext err s m g
   show (Interleave p1 p2) = "(Interleave " <> show p1 <> " " <> show p2 <> ")"
   show Empty = "Empty"
   show (Failure err _) = "(Failure " <> show err <> " <k>)"
+  show (Handle p _) = "(Handle " <> show p <> " <h>)"
   show (Axiom ext) = "(Axiom " <> show ext <> ")"
 
 instance Functor m => Functor (ProofStateT ext' ext err s m) where
@@ -90,6 +93,7 @@ instance Functor m => Functor (ProofStateT ext' ext err s m) where
     fmap f (Interleave p1 p2) = Interleave (fmap f p1) (fmap f p2)
     fmap _ Empty = Empty
     fmap f (Failure err k) = Failure err (fmap f . k)
+    fmap f (Handle p h) = Handle (fmap f p) h
     fmap _ (Axiom ext) = Axiom ext
 
 instance Functor m => Applicative (ProofStateT ext ext err s m) where
@@ -103,6 +107,7 @@ instance MFunctor (ProofStateT ext' ext err s) where
   hoist nat (Alt p1 p2)   = Alt (hoist nat p1) (hoist nat p2)
   hoist nat (Interleave p1 p2)   = Interleave (hoist nat p1) (hoist nat p2)
   hoist nat (Failure err k) = Failure err $ fmap (hoist nat) k
+  hoist nat (Handle p h) = Handle (hoist nat p) (nat . h)
   hoist _ Empty         = Empty
   hoist _ (Axiom ext)   = Axiom ext
 
@@ -118,6 +123,7 @@ applyCont k (Alt p1 p2) = Alt (applyCont k p1) (applyCont k p2)
 applyCont k (Interleave p1 p2) = Interleave (applyCont k p1) (applyCont k p2)
 applyCont _ Empty = Empty
 applyCont k (Failure err k') = Failure err (applyCont k . k')
+applyCont k (Handle p h) = Handle (applyCont k p) h
 applyCont k (Axiom ext) = k ext
 
 instance Functor m => Monad (ProofStateT ext ext err s m) where
@@ -128,6 +134,7 @@ instance Functor m => Monad (ProofStateT ext ext err s m) where
     (Alt p1 p2)   >>= f = Alt (p1 >>= f) (p2 >>= f)
     (Interleave p1 p2)   >>= f = Interleave (p1 >>= f) (p2 >>= f)
     (Failure err k) >>= f = Failure err (f <=< k)
+    (Handle p h) >>= f = Handle (p >>= f) h
     Empty         >>= _ = Empty
     (Axiom ext)   >>= _ = Axiom ext
 
@@ -156,8 +163,6 @@ class (Monad m) => MonadExtract ext err m | m -> ext, m -> err where
   unsolvableHole :: err -> m ext
   default unsolvableHole :: (MonadTrans t, MonadExtract ext err m1, m ~ t m1) => err -> m ext
   unsolvableHole = lift . unsolvableHole
-  -- default hole :: (MonadTrans t, MonadExtract ext m1, m ~ t m1) => m ext
-  -- hole = lift hole
 
 instance (MonadExtract ext err m) => MonadExtract ext err (ReaderT r m)
 instance (MonadExtract ext err m) => MonadExtract ext err (StateT s m)
@@ -186,21 +191,29 @@ prioritizing combine (Right b1) (Right b2) = Right $ b1 `combine` b2
 -- This function will cause a proof to terminate when it encounters a 'Failure', and will return a 'Left'.
 -- If you want to still recieve an extract even when you encounter a failure, you should use 'partialProofs'.
 proofs :: forall ext err s m goal. (MonadExtract ext err m) => s -> ProofStateT ext ext err s m goal -> m (Either [err] [(Proof ext s goal)])
-proofs s p = go s [] p
+proofs s p = go s [] pure p
     where
-      go :: s -> [goal] -> ProofStateT ext ext err s m goal -> m (Either [err] [Proof ext s goal])
-      go s goals (Subgoal goal k) = do
+      go :: s -> [goal] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [err] [Proof ext s goal])
+      go s goals handlers (Subgoal goal k) = do
          h <- hole
-         (go s (goals ++ [goal]) $ k h)
-      go s goals (Effect m) = go s goals =<< m
-      go s goals (Stateful f) =
+         (go s (goals ++ [goal]) handlers $ k h)
+      go s goals handlers (Effect m) = m >>= go s goals handlers
+      go s goals handlers (Stateful f) =
           let (s', p) = f s
-          in go s' goals p
-      go s goals (Alt p1 p2) = liftA2 (prioritizing (<>)) (go s goals p1) (go s goals p2)
-      go s goals (Interleave p1 p2) = liftA2 (prioritizing interleave) (go s goals p1) (go s goals p2)
-      go _ _ Empty = pure $ Left []
-      go _ _ (Failure err _) = pure $ Left [err]
-      go s goals (Axiom ext) = pure $ Right $ [Proof ext s goals]
+          in go s' goals handlers p
+      go s goals handlers (Alt p1 p2) = liftA2 (prioritizing (<>)) (go s goals handlers p1) (go s goals handlers p2)
+      go s goals handlers (Interleave p1 p2) = liftA2 (prioritizing interleave) (go s goals handlers p1) (go s goals handlers p2)
+      go _ _ _ Empty = pure $ Left []
+      go _ _ handlers (Failure err _) = do
+          annErr <- handlers err
+          pure $ Left [annErr]
+      go s goals handlers (Handle p h) =
+          -- NOTE [Handler ordering]:
+          -- If we have multiple handlerss in scope, then we want the ones further down the stack to
+          -- run /first/. This allows the handlerss up the stack to add their annotations on top of the
+          -- ones lower down, which is the behavior that we desire.
+          go s goals (h >=> handlers) p
+      go s goals _ (Axiom ext) = pure $ Right $ [Proof ext s goals]
 
 -- | The result of executing 'partialProofs'.
 data PartialProof ext s goal err
@@ -216,63 +229,34 @@ data PartialProof ext s goal err
 --
 -- This function will return all the 'SuccessfulProof' before the 'PartialProof'.
 partialProofs :: forall ext err s m goal. (MonadExtract ext err m) => s -> ProofStateT ext ext err s m goal -> m (Either [PartialProof ext s goal err] [Proof ext s goal])
-partialProofs s pf = go s [] [] pf
+partialProofs s pf = go s [] [] pure pf
     where
-      go :: s -> [goal] -> [err] -> ProofStateT ext ext err s m goal -> m (Either [PartialProof ext s goal err] [Proof ext s goal])
-      go s goals errs (Subgoal goal k) = do
+      go :: s -> [goal] -> [err] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [PartialProof ext s goal err] [Proof ext s goal])
+      go s goals errs handlers (Subgoal goal k) = do
          h <- hole
-         go s (goals ++ [goal]) errs $ k h
-      go s goals errs (Effect m) = go s goals errs =<< m
-      go s goals errs (Stateful f) =
+         go s (goals ++ [goal]) errs handlers $ k h
+      go s goals errs handlers (Effect m) = m >>= go s goals errs handlers
+      go s goals errs handlers (Stateful f) =
           let (s', p) = f s
-          in go s' goals errs p
-      go s goals errs (Alt p1 p2) = liftA2 (prioritizing (<>)) (go s goals errs p1) (go s goals errs p2)
-      go s goals errs (Interleave p1 p2) = liftA2 (prioritizing interleave) (go s goals errs p1) (go s goals errs p2)
-      go _ _ _ Empty = pure $ Left []
-      go s goals errs (Failure err k) = do
-          h <- unsolvableHole err
-          go s goals (errs ++ [err]) $ k h
-      go s goals [] (Axiom ext) = pure $ Right [Proof ext s goals]
-      go s goals errs (Axiom ext) = pure $ Left [PartialProof ext s goals errs]
+          in go s' goals errs handlers p
+      go s goals errs handlers (Alt p1 p2) = liftA2 (prioritizing (<>)) (go s goals errs handlers p1) (go s goals errs handlers p2)
+      go s goals errs handlers (Interleave p1 p2) = liftA2 (prioritizing interleave) (go s goals errs handlers p1) (go s goals errs handlers p2)
+      go _ _ _ _ Empty = pure $ Left []
+      go s goals errs handlers (Failure err k) = do
+          annErr <- handlers err
+          h <- unsolvableHole annErr
+          go s goals (errs ++ [annErr]) handlers $ k h
+      go s goals errs handlers (Handle p h) =
+          -- See NOTE [Handler ordering]
+          go s goals errs (h >=> handlers) p
+      go s goals [] _ (Axiom ext) = pure $ Right [Proof ext s goals]
+      go s goals errs _ (Axiom ext) = pure $ Left [PartialProof ext s goals errs]
 
 instance (MonadIO m) => MonadIO (ProofStateT ext ext err s m) where
   liftIO = lift . liftIO
 
 instance (MonadThrow m) => MonadThrow (ProofStateT ext ext err s m) where
   throwM = lift . throwM
-
-instance (MonadCatch m) => MonadCatch (ProofStateT ext ext err s m) where
-    catch (Subgoal goal k) handle = Subgoal goal (flip catch handle . k)
-    catch (Effect m) handle = Effect . catch m $ pure . handle
-    catch (Stateful s) handle = Stateful (fmap (flip catch handle) . s)
-    catch (Alt p1 p2) handle = Alt (catch p1 handle) (catch p2 handle)
-    catch (Interleave p1 p2) handle = Interleave (catch p1 handle) (catch p2 handle)
-    catch Empty _ = Empty
-    catch (Failure err k) handle = Failure err (flip catch handle . k)
-    catch (Axiom e) _ = (Axiom e)
-
- -- FIXME: Does catching errors even make sense????
-instance (Monad m) => MonadError err (ProofStateT ext ext err s m) where
-    throwError err = Failure err Axiom
-    catchError (Subgoal goal k) handle = Subgoal goal (flip catchError handle . k)
-    catchError (Effect m) handle = Effect (fmap (flip catchError handle) m)
-    catchError (Stateful s) handle = Stateful $ fmap (flip catchError handle) . s
-    catchError (Alt p1 p2) handle = catchError p1 handle <|> catchError p2 handle
-    catchError (Interleave p1 p2) handle = Interleave (catchError p1 handle) (catchError p2 handle)
-    catchError Empty _ = Empty
-    catchError (Failure err k) handle = applyCont (flip catchError handle . k) $ handle err
-    catchError (Axiom e) _ = Axiom e
-
-instance (MonadReader r m) => MonadReader r (ProofStateT ext ext err s m) where
-    ask = lift ask
-    local f (Subgoal goal k) = Subgoal goal (local f . k)
-    local f (Effect m) = Effect (local f m)
-    local f (Stateful s) = Stateful (fmap (local f) . s)
-    local f (Alt p1 p2) = Alt (local f p1) (local f p2)
-    local f (Interleave p1 p2) = Interleave (local f p1) (local f p2)
-    local _ Empty = Empty
-    local f (Failure err k) = Failure err (local f . k)
-    local _ (Axiom e) = Axiom e
 
 instance (Monad m) => MonadState s (ProofStateT ext ext err s m) where
     state f = Stateful $ \s ->
@@ -294,27 +278,20 @@ subgoals fs (Stateful s) = Stateful (fmap (subgoals fs) . s)
 subgoals fs (Alt p1 p2) = Alt (subgoals fs p1) (subgoals fs p2)
 subgoals fs (Interleave p1 p2) = Interleave (subgoals fs p1) (subgoals fs p2)
 subgoals fs (Failure err k) = Failure err (subgoals fs . k)
+subgoals fs (Handle p h) = Handle (subgoals fs p) h
 subgoals _ Empty = Empty
 subgoals _ (Axiom ext) = Axiom ext
 
-mapExtract :: (Functor m) => (ext -> ext') -> (ext' -> ext) -> ProofStateT ext ext err s m jdg -> ProofStateT ext' ext' err s m jdg
-mapExtract into out = \case
-    Subgoal goal k -> Subgoal goal $ mapExtract into out . k . out
-    Effect m -> Effect (fmap (mapExtract into out) m)
-    Stateful s -> Stateful (fmap (mapExtract into out) . s)
-    Alt t1 t2 -> Alt (mapExtract into out t1) (mapExtract into out t2)
-    Interleave t1 t2 -> Interleave (mapExtract into out t1) (mapExtract into out t2)
-    Empty -> Empty
-    Failure err k -> Failure err $ mapExtract into out . k . out
-    Axiom ext -> Axiom $ into ext
-
-mapExtract' :: Functor m => (a -> b) -> ProofStateT ext' a err s m jdg -> ProofStateT ext' b err s m jdg
-mapExtract' into = \case
-    Subgoal goal k -> Subgoal goal $ mapExtract' into . k
-    Effect m -> Effect (fmap (mapExtract' into) m)
-    Stateful s -> Stateful (fmap (mapExtract' into) . s)
-    Alt t1 t2 -> Alt (mapExtract' into t1) (mapExtract' into t2)
-    Interleave t1 t2 -> Interleave (mapExtract' into t1) (mapExtract' into t2)
-    Empty -> Empty
-    Failure err k -> Failure err $ mapExtract' into . k
-    Axiom ext -> Axiom $ into ext
+-- | @mapExtract f g p@ allows yout to modify the extract type of a ProofState.
+-- This witness the @Profunctor@ instance of 'ProofState', which we can't write without a newtype due to
+-- the position of the type variables
+mapExtract :: (Functor m) => (a -> ext') -> (ext -> b) -> ProofStateT ext' ext err s m jdg -> ProofStateT a b err s m jdg
+mapExtract into out (Subgoal goal k) = Subgoal goal (mapExtract into out . k . into)
+mapExtract into out (Effect m) = Effect (fmap (mapExtract into out) m)
+mapExtract into out (Stateful s) = Stateful (fmap (mapExtract into out) . s)
+mapExtract into out (Alt p1 p2) = Alt (mapExtract into out p1) (mapExtract into out p2)
+mapExtract into out (Interleave p1 p2) = Interleave (mapExtract into out p1) (mapExtract into out p2)
+mapExtract _ _ Empty = Empty
+mapExtract into out (Failure err k) = Failure err (mapExtract into out . k . into)
+mapExtract into out (Handle p h) = Handle (mapExtract into out p) h
+mapExtract _ out (Axiom ext) = Axiom (out ext)

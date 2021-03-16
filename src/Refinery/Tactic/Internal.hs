@@ -40,7 +40,6 @@ import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Except
 import Control.Monad.Catch
-import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Trans ()
 import Control.Monad.IO.Class ()
@@ -65,11 +64,8 @@ newtype TacticT jdg ext err s m a = TacticT { unTacticT :: StateT jdg (ProofStat
            , Alternative
            , Monad
            , MonadPlus
-           , MonadReader env
-           , MonadError err
            , MonadIO
            , MonadThrow
-           , MonadCatch
            , Generic
            )
 
@@ -108,7 +104,7 @@ instance (Show jdg, Show err, Show a, Show (m (ProofStateT ext a err s m jdg))) 
   show = show . unRuleT
 
 instance Functor m => Functor (RuleT jdg ext err s m) where
-  fmap = coerce mapExtract'
+  fmap f = coerce (mapExtract id f)
 
 instance Monad m => Applicative (RuleT jdg ext err s m) where
   pure = return
@@ -125,8 +121,9 @@ instance Monad m => Monad (RuleT jdg ext err s m) where
   RuleT (Stateful s)       >>= f = coerce $ Stateful $ fmap (bindAlaCoerce f) . s
   RuleT (Alt p1 p2)        >>= f = coerce $ Alt (bindAlaCoerce f p1) (bindAlaCoerce f p2)
   RuleT (Interleave p1 p2) >>= f = coerce $ Interleave (bindAlaCoerce f p1) (bindAlaCoerce f p2)
-  RuleT Empty             >>= _ = coerce $ Empty
+  RuleT Empty              >>= _ = coerce $ Empty
   RuleT (Failure err k)    >>= f = coerce $ Failure err $ fmap (bindAlaCoerce f) k
+  RuleT (Handle p h)       >>= f = coerce $ Handle (bindAlaCoerce f p) h
   RuleT (Axiom e)          >>= f = f e
 
 instance Monad m => MonadState s (RuleT jdg ext err s m) where
@@ -134,26 +131,10 @@ instance Monad m => MonadState s (RuleT jdg ext err s m) where
         let (a, s') = f s
         in (s', Axiom a)
 
-instance MonadReader r m => MonadReader r (RuleT jdg ext err s m) where
-    ask = lift ask
-    local f (RuleT (Subgoal goal k))   = coerce $ Subgoal goal (localAlaCoerce f . k)
-    local f (RuleT (Effect m))         = coerce $ Effect (local f m)
-    local f (RuleT (Stateful s))       = coerce $ Stateful (fmap (localAlaCoerce f) . s)
-    local f (RuleT (Alt p1 p2))        = coerce $ Alt (localAlaCoerce f p1) (localAlaCoerce f p2)
-    local f (RuleT (Interleave p1 p2)) = coerce $ Interleave (localAlaCoerce f p1) (localAlaCoerce f p2)
-    local _ (RuleT Empty)              = coerce $ Empty
-    local f (RuleT (Failure err k))    = coerce $ Failure err (localAlaCoerce f . k)
-    local _ (RuleT (Axiom e))          = coerce $ Axiom e
-
 bindAlaCoerce
   :: (Monad m, Coercible c (m b), Coercible a1 (m a2)) =>
      (a2 -> m b) -> a1 -> c
 bindAlaCoerce f = coerce . (f =<<) . coerce
-
-localAlaCoerce
-  :: (MonadReader r m) =>
-     (r -> r) -> ProofStateT ext a err s m jdg -> ProofStateT ext a err s m jdg
-localAlaCoerce f = coerce . local f . RuleT
 
 instance MonadTrans (RuleT jdg ext err s) where
   lift = coerce . Effect . fmap Axiom

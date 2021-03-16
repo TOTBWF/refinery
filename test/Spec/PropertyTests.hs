@@ -66,9 +66,11 @@ instance MonadExtract Int String Identity where
 
 instance ( CoArbitrary ext'
          , Arbitrary ext
+         , CoArbitrary err
          , Arbitrary err
          , Arbitrary a
          , Arbitrary (m (ProofStateT ext' ext err s m a))
+         , Arbitrary (m err)
          , CoArbitrary s
          , Arbitrary s
          )
@@ -96,10 +98,12 @@ instance (Arbitrary (m (a, s)), CoArbitrary s) => Arbitrary (StateT s m a) where
 instance ( CoArbitrary jdg
          , Arbitrary a
          , Arbitrary ext
+         , CoArbitrary err
          , Arbitrary err
          , CoArbitrary ext
          , Arbitrary jdg
          , Arbitrary (m (ProofStateT ext ext err s m (a, jdg)))
+         , Arbitrary (m err)
          , CoArbitrary s
          , Arbitrary s
          )
@@ -108,10 +112,12 @@ instance ( CoArbitrary jdg
   shrink = genericShrink
 
 instance ( Arbitrary a
+         , CoArbitrary err
          , Arbitrary err
          , CoArbitrary ext
          , Arbitrary jdg
          , Arbitrary (m (ProofStateT ext a err s m jdg))
+         , Arbitrary (m err)
          , CoArbitrary s
          , Arbitrary s
          )

@@ -24,8 +24,10 @@
     ```
     data Proof ext s goal = Proof { pf_extract :: ext, pf_state :: s, pf_unsolvedGoals :: [goal] }
     ```
-  - `try` now uses `commit` instead of `<|>`. This means that we wont
-    generate a useless extract all the time.
+  - Removed `commit`, as it is fundementally broken.
+  - Added `handler`, and removed the `MonadError` instance for `TacticT`.
+    Now, instead of recovering from errors (which was fraught with subtle issues),
+	we allow the user to annotate errors instead.
 * 0.3.0.0
   - Reworked the core types of the library, which fixed a lot of the weird behavior
   that users were experiencing.

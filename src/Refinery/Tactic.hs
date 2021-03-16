@@ -32,6 +32,10 @@ module Refinery.Tactic
   , gather
   , pruning
   , ensure
+  -- * Errors and Error Handling
+  , failure
+  , handler
+  , handler_
   -- * Extract Manipulation
   , tweak
   , peek
@@ -105,6 +109,27 @@ inspect f = TacticT $ gets f
 choice :: (Monad m) => [TacticT jdg ext err s m a] -> TacticT jdg ext err s m a
 choice = foldr (<%>) empty
 
+-- | @failure err@ will create an unsolvable hole that will be ignored by subsequent tactics.
+failure :: err -> TacticT jdg ext err s m a
+failure err = tactic $ \_ -> Failure err Axiom
+
+-- | @handler f@ will install an "error handler". These let you add more context to errors, and
+-- potentially run effects. For instance, you may want to take note that a particular situation is
+-- unsolvable, and that we shouldn't attempt to run this series of tactics against a given goal again.
+--
+-- Note that handlers further down the stack get run before those higher up the stack.
+-- For instance, consider the following example:
+-- @
+--     handler f >> handler g >> failure err
+-- @
+-- Here, @g@ will get run before @f@.
+handler :: (err -> m err) -> TacticT jdg ext err s m ()
+handler h = tactic $ \j -> Handle (Subgoal ((), j) Axiom) h
+
+-- | A variant of 'handler' that doesn't modify the error at all, and solely exists to run effects.
+handler_ :: (Functor m) => (err -> m ()) -> TacticT jdg ext err s m ()
+handler_ h = handler (\err -> err <$ h err)
+
 -- | @progress eq err t@ applies the tactic @t@, and checks to see if the
 -- resulting subgoals are all equal to the initial goal by using @eq@. If they
 -- are, it throws @err@.
@@ -113,17 +138,16 @@ progress eq err t = do
   j <- goal
   a <- t
   j' <- goal
-  if j `eq` j' then pure a else throwError err
+  if j `eq` j' then pure a else failure err
 
 -- | @gather t f@ runs the tactic @t@, then runs @f@ with all of the generated subgoals to determine
 -- the next tactic to run.
--- FIXME: Partial Proofs ?????
 gather :: (MonadExtract ext err m) => TacticT jdg ext err s m a -> ([(a, jdg)] -> TacticT jdg ext err s m a) -> TacticT jdg ext err s m a
 gather t f = tactic $ \j -> do
     s <- get
     results <- lift $ proofs s $ proofState t j
     case results of
-      Left errs -> msum $ fmap throwError errs
+      Left errs -> msum $ fmap (\err -> Failure err Axiom) errs
       Right pfs -> msum $ fmap (\(Proof _ _ jdgs) -> proofState (f jdgs) j) pfs
 
 -- | @pruning t f@ runs the tactic @t@, and then applies a predicate to all of the generated subgoals.
@@ -132,7 +156,7 @@ pruning
     => TacticT jdg ext err s m ()
     -> ([jdg] -> Maybe err)
     -> TacticT jdg ext err s m ()
-pruning t p = gather t $ maybe t throwError . p . fmap snd
+pruning t p = gather t $ maybe t failure . p . fmap snd
 
 -- | @ensure p f t@ runs the tactic @t@, and applies a predicate to the state after the execution of @t@. We also run
 -- a "cleanup" function @f@. Note that the predicate is applied to the state _before_ the cleanup function is run.
@@ -156,7 +180,7 @@ focus t n t' = t <@> (replicate n (pure ()) ++ [t'] ++ repeat (pure ()))
 
 -- | @tweak f t@ lets us modify the extract produced by the tactic @t@.
 tweak :: (Functor m) => (ext -> ext) -> TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
-tweak f t = tactic $ \j -> mapExtract' f $ proofState t j
+tweak f t = tactic $ \j -> mapExtract id f $ proofState t j
 
 -- | @peek t k@ lets us examine the extract produced by @t@, and then run a tactic based off it's value.
 peek :: (Functor m) => TacticT jdg ext err s m a -> (ext -> TacticT jdg ext err s m b) -> TacticT jdg ext err s m a
@@ -166,7 +190,7 @@ peek t k = (tactic $ \j -> Subgoal ((), j) (\e -> fmap (first (const ())) $ proo
 poke :: (Functor m) => TacticT jdg ext err s m () -> (ext -> TacticT jdg ext err s m ext) -> TacticT jdg ext err s m ()
 poke t k = tactic $ \j -> Subgoal ((), j) $ \ext -> do
     (ext', j') <- proofState (k ext) j
-    mapExtract' (const ext') $ proofState t j'
+    mapExtract id (const ext') $ proofState t j'
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 -- Note that this function will backtrack on errors. If you want a version that provides partial proofs,
