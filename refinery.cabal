@@ -38,7 +38,7 @@ library
       Paths_refinery
   hs-source-dirs:
       src
-  ghc-options: -Wall -Wredundant-constraints
+  ghc-options: -Wall -Wredundant-constraints -fmax-relevant-binds=0 -fno-show-valid-hole-fits
   build-depends:
       base >=4.7 && <5
     , exceptions >=0.10
@@ -56,7 +56,7 @@ test-suite refinery-test
       Paths_refinery
   hs-source-dirs:
       test
-  ghc-options: -Wall -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -Wall -Wredundant-constraints -fmax-relevant-binds=0 -fno-show-valid-hole-fits -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       QuickCheck
     , base >=4.7 && <5
