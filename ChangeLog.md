@@ -27,7 +27,13 @@
   - Added `handler`, and removed the `MonadError` instance for `TacticT`.
     Now, instead of recovering from errors (which was fraught with subtle issues),
 	we allow the user to annotate errors instead.
-  - Added some useful tactic combinators
+  - Added some useful tactic combinators:
+    - tweak
+	- peek
+	- poke
+	- inspect
+	- some_
+  - Swapped the order of arguments to `mapExtract` to line up with `Profunctor`
 * 0.3.0.0
   - Reworked the core types of the library, which fixed a lot of the weird behavior
   that users were experiencing.
