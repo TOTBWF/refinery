@@ -33,9 +33,9 @@ testBatch (batchName, tests) = describe ("laws for: " ++ batchName) $
   traverse_ (uncurry it) tests
 
 
-instance (EqProp ext, EqProp s, EqProp jdg) => EqProp (Proof ext s jdg) where
+instance (EqProp ext, EqProp s, EqProp jdg) => EqProp (Proof s jdg ext) where
 
-instance (MonadExtract ext err m, EqProp (m (Either [err] [Proof ext s a])), Arbitrary s)
+instance (MonadExtract ext err m, EqProp (m (Either [err] [Proof s a ext])), Arbitrary s)
       => EqProp (ProofStateT ext ext err s m a) where
   (=-=) a b = property $ do
     s <- arbitrary
@@ -43,7 +43,7 @@ instance (MonadExtract ext err m, EqProp (m (Either [err] [Proof ext s a])), Arb
 
 instance ( MonadExtract ext err m
          , Arbitrary jdg
-         , EqProp (m (Either [err] [Proof ext s jdg]))
+         , EqProp (m (Either [err] [Proof s jdg ext]))
          , Show s
          , Arbitrary s
          , Show jdg
@@ -52,7 +52,7 @@ instance ( MonadExtract ext err m
   (=-=) = (=-=) `on` runTacticT . (() <$)
 
 instance ( Arbitrary jdg
-         , EqProp (m (Either [err] [Proof ext s jdg]))
+         , EqProp (m (Either [err] [Proof s jdg ext]))
          , MonadExtract ext err m
          , Arbitrary s
          , Show s , Show jdg
@@ -178,7 +178,7 @@ rightAltBind m1 m2 m3 =
 interleaveMZero
     :: forall m a jdg ext err s
      . (MonadExtract ext err m
-       , EqProp (m (Either [err] [Proof ext s jdg]))
+       , EqProp (m (Either [err] [Proof s jdg ext]))
        , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
@@ -190,7 +190,7 @@ interleaveMZero _ m =
 interleaveMPlus
     :: forall m a jdg ext err s
      . (MonadExtract ext err m
-       , EqProp (m (Either [err] [Proof ext s jdg]))
+       , EqProp (m (Either [err] [Proof s jdg ext]))
        , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
@@ -225,7 +225,7 @@ distribPut _ = property $ do
 -- peekConst
 --     :: forall m jdg ext err s
 --      . (MonadExtract ext err m
---        , EqProp (m [Either err (Proof ext s jdg)])
+--        , EqProp (m [Either err (Proof s jdg ext)])
 --        , Show s , Show jdg
 --        , Arbitrary jdg, Arbitrary s)
 --     => TacticT jdg ext err s m ()  -- ^ proxy

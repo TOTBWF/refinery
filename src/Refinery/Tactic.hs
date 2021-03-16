@@ -1,16 +1,19 @@
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE DefaultSignatures          #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 -----------------------------------------------------------------------------
--- |
+-- | Tactics and Tactic Combinators
+--
+-- This module contains everything you need to start defining tactics
+-- and tactic combinators.
 -- Module      :  Refinery.Tactic
 -- Copyright   :  (c) Reed Mullanix 2019
 -- License     :  BSD-style
@@ -207,7 +210,7 @@ poke t k = tactic $ \j -> Subgoal ((), j) $ \ext -> do
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 -- Note that this function will backtrack on errors. If you want a version that provides partial proofs,
 -- use 'runPartialTacticT'
-runTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m (Either [err] [(Proof ext s jdg)])
+runTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m (Either [err] [(Proof s jdg ext)])
 runTacticT t j s = proofs s $ fmap snd $ proofState t j
 
 -- | Run a tactic, and get just the list of extracts, ignoring any other information.
@@ -221,7 +224,7 @@ solutions t j s = either (const []) (map pf_extract) <$> runTacticT t j s
 --
 -- Note that this version is inherently slower than 'runTacticT', as it needs to continue producing extracts.
 -- Furthermore, it will return all of the 'SuccessfulProof' before the 'PartialProof'.
-runPartialTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m (Either [PartialProof ext s jdg err] [(Proof ext s jdg)])
+runPartialTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m (Either [PartialProof s err jdg ext] [(Proof s jdg ext)])
 runPartialTacticT t j s = partialProofs s $ fmap snd $ proofState t j
 
 -- | Turn an inference rule that examines the current goal into a tactic.

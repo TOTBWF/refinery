@@ -88,10 +88,7 @@ refine = do
 jdg :: Judgement
 jdg = ([] :- ("a" :-> "b" :-> (TPair "a" "b")))
 
-solutions :: T () -> Judgement -> [Term]
-solutions t j = runIdentity $ solutions t j 0
-
 stlcTests :: Spec
 stlcTests = do
     describe "Simply Typed Lambda Calculus" $ do
-        it "auto synthesize a solution"           $ (solutions auto jdg) `shouldBe` [(Lam "0" $ Lam "1" $ Pair (Var "0") (Var "1"))]
+        it "auto synthesize a solution" $ (runIdentity $ solutions auto jdg 0) `shouldBe` [(Lam "0" $ Lam "1" $ Pair (Var "0") (Var "1"))]

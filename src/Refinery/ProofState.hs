@@ -1,13 +1,14 @@
-{-# LANGUAGE LambdaCase #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 {-# LANGUAGE DefaultSignatures      #-}
+{-# LANGUAGE DeriveFunctor          #-}
 {-# LANGUAGE DeriveGeneric          #-}
 {-# LANGUAGE DerivingStrategies     #-}
 {-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE LambdaCase             #-}
 {-# LANGUAGE MultiParamTypeClasses  #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RankNTypes             #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE UndecidableInstances   #-}
@@ -24,8 +25,7 @@
 -- Maintainer  :  reedmullanix@gmail.com
 --
 --
-module Refinery.ProofState
-where
+module Refinery.ProofState where
 
 import           Control.Applicative
 import           Control.Monad
@@ -76,7 +76,7 @@ data ProofStateT ext' ext err s m goal
     -- or run effects.
     | Axiom ext
     -- ^ Represents a simple extract.
-    deriving stock (Generic)
+    deriving stock (Generic, Functor)
 
 instance (Show goal, Show err, Show ext, Show (m (ProofStateT ext' ext err s m goal))) => Show (ProofStateT ext' ext err s m goal) where
   show (Subgoal goal _) = "(Subgoal " <> show goal <> " <k>)"
@@ -89,18 +89,6 @@ instance (Show goal, Show err, Show ext, Show (m (ProofStateT ext' ext err s m g
   show (Failure err _) = "(Failure " <> show err <> " <k>)"
   show (Handle p _) = "(Handle " <> show p <> " <h>)"
   show (Axiom ext) = "(Axiom " <> show ext <> ")"
-
-instance Functor m => Functor (ProofStateT ext' ext err s m) where
-    fmap f (Subgoal goal k) = Subgoal (f goal) (fmap f . k)
-    fmap f (Effect m) = Effect (fmap (fmap f) m)
-    fmap f (Stateful s) = Stateful $ fmap (fmap f) . s
-    fmap f (Alt p1 p2) = Alt (fmap f p1) (fmap f p2)
-    fmap f (Interleave p1 p2) = Interleave (fmap f p1) (fmap f p2)
-    fmap f (Commit p1 p2) = Commit (fmap f p1) (fmap f p2)
-    fmap _ Empty = Empty
-    fmap f (Failure err k) = Failure err (fmap f . k)
-    fmap f (Handle p h) = Handle (fmap f p) h
-    fmap _ (Axiom ext) = Axiom ext
 
 instance Functor m => Applicative (ProofStateT ext ext err s m) where
     pure = return
@@ -179,7 +167,7 @@ instance (MonadExtract ext err m, Monoid w) => MonadExtract ext err (LW.WriterT 
 instance (MonadExtract ext err m, Monoid w) => MonadExtract ext err (SW.WriterT w m)
 instance (MonadExtract ext err m) => MonadExtract ext err (ExceptT err m)
 
-data Proof ext s goal = Proof { pf_extract :: ext, pf_state :: s, pf_unsolvedGoals :: [goal] }
+data Proof s goal ext = Proof { pf_extract :: ext, pf_state :: s, pf_unsolvedGoals :: [goal] }
     deriving (Eq, Show, Generic)
 
 interleave :: [a] -> [a] -> [a]
@@ -199,10 +187,10 @@ prioritizing combine (Right b1) (Right b2) = Right $ b1 `combine` b2
 -- | Interpret a 'ProofStateT' into a list of (possibly incomplete) extracts.
 -- This function will cause a proof to terminate when it encounters a 'Failure', and will return a 'Left'.
 -- If you want to still recieve an extract even when you encounter a failure, you should use 'partialProofs'.
-proofs :: forall ext err s m goal. (MonadExtract ext err m) => s -> ProofStateT ext ext err s m goal -> m (Either [err] [(Proof ext s goal)])
+proofs :: forall ext err s m goal. (MonadExtract ext err m) => s -> ProofStateT ext ext err s m goal -> m (Either [err] [(Proof s goal ext)])
 proofs s p = go s [] pure p
     where
-      go :: s -> [goal] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [err] [Proof ext s goal])
+      go :: s -> [goal] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [err] [Proof s goal ext])
       go s goals handlers (Subgoal goal k) = do
          h <- hole
          (go s (goals ++ [goal]) handlers $ k h)
@@ -228,7 +216,7 @@ proofs s p = go s [] pure p
       go s goals _ (Axiom ext) = pure $ Right $ [Proof ext s goals]
 
 -- | The result of executing 'partialProofs'.
-data PartialProof ext s goal err
+data PartialProof s err goal ext
     = PartialProof ext s [goal] [err]
     -- ^ A so called "partial proof". These are proofs that encountered errors
     -- during execution.
@@ -240,10 +228,10 @@ data PartialProof ext s goal err
 -- you should use 'proofs'.
 --
 -- This function will return all the 'SuccessfulProof' before the 'PartialProof'.
-partialProofs :: forall ext err s m goal. (MonadExtract ext err m) => s -> ProofStateT ext ext err s m goal -> m (Either [PartialProof ext s goal err] [Proof ext s goal])
+partialProofs :: forall ext err s m goal. (MonadExtract ext err m) => s -> ProofStateT ext ext err s m goal -> m (Either [PartialProof s err goal ext] [Proof s goal ext])
 partialProofs s pf = go s [] [] pure pf
     where
-      go :: s -> [goal] -> [err] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [PartialProof ext s goal err] [Proof ext s goal])
+      go :: s -> [goal] -> [err] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [PartialProof s err goal ext] [Proof s goal ext])
       go s goals errs handlers (Subgoal goal k) = do
          h <- hole
          go s (goals ++ [goal]) errs handlers $ k h
