@@ -1,7 +1,6 @@
 # Refinery
 
-[Hackage](http://img.shields.io/hackage/v/refinery.svg)
-
+[![Hackage](http://img.shields.io/hackage/v/refinery.svg)](https://hackage.haskell.org/package/refinery)
 
 `refinery` provides a series of language-independent building blocks for creating automated, type directed program synthesis tools.
 It is currently used to power the automatic code synthesis tool [Wingman For Haskell](https://haskellwingman.dev/).
