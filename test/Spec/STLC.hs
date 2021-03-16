@@ -12,6 +12,7 @@ module Spec.STLC where
 import Data.List
 import Data.String (IsString(..))
 
+import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.State
 
@@ -45,7 +46,7 @@ instance IsString Type where
 
 -- A judgement is just a context, along with a goal
 data Judgement = [(String, Type)] :- Type
-  deriving (Show)
+  deriving (Show, Eq)
 
 instance MonadExtract Term String Identity where
     hole = pure Hole
@@ -85,6 +86,17 @@ refine = do
     many_ lam
     try pair
 
+testHandlers :: T ()
+testHandlers = do
+    handler (\err -> pure $ err ++ " Third")
+    handler (\err -> pure $ err ++ " Second")
+    failure "First"
+
+testHandlerAlt :: T ()
+testHandlerAlt = do
+    handler (\err -> pure $ err ++ " Handled")
+    (failure "Error1") <|> (failure "Error2")
+
 jdg :: Judgement
 jdg = ([] :- ("a" :-> "b" :-> (TPair "a" "b")))
 
@@ -92,3 +104,5 @@ stlcTests :: Spec
 stlcTests = do
     describe "Simply Typed Lambda Calculus" $ do
         it "auto synthesize a solution" $ (runIdentity $ evalTacticT auto jdg 0) `shouldBe` [(Lam "0" $ Lam "1" $ Pair (Var "0") (Var "1"))]
+        it "handler ordering is correct" $ (runIdentity $ runTacticT testHandlers jdg 0) `shouldBe` (Left ["First Second Third"])
+        it "handler works through alt" $ (runIdentity $ runTacticT testHandlerAlt jdg 0) `shouldBe` (Left ["Error1 Handled","Error2 Handled"])

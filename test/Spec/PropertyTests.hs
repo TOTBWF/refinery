@@ -84,6 +84,7 @@ instance ( CoArbitrary ext'
       , Alt        <$> decayArbitrary 2 <*> decayArbitrary 2
       , Stateful   <$> arbitrary
       , Failure    <$> arbitrary <*> decayArbitrary 2
+      , Handle     <$> decayArbitrary 2 <*> arbitrary
       ] ++ small
     where
       small =
