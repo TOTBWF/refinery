@@ -56,7 +56,7 @@ data ProofStateT ext' ext err s m goal
     -- ^ Run a stateful computation. We don't want to use 'StateT' here, as it
     -- doesn't play nice with backtracking.
     | Alt (ProofStateT ext' ext err s m goal) (ProofStateT ext' ext err s m goal)
-    -- ^ Combine together the results of two @ProofState@s.
+    -- ^ Combine together the results of two @ProofState@s, preserving the order that they were synthesized in.
     | Interleave (ProofStateT ext' ext err s m goal) (ProofStateT ext' ext err s m goal)
     -- ^ Similar to 'Alt', but will interleave the results, rather than just appending them.
     -- This is useful if the first argument produces potentially infinite results.
@@ -170,11 +170,21 @@ instance (MonadExtract ext err m) => MonadExtract ext err (ExceptT err m)
 data Proof s goal ext = Proof { pf_extract :: ext, pf_state :: s, pf_unsolvedGoals :: [goal] }
     deriving (Eq, Show, Generic)
 
+-- | Interleave two lists together.
+-- @
+--     interleave [1,2,3,4] [5,6]
+-- @
+-- > [1,5,2,6,3,4]
 interleave :: [a] -> [a] -> [a]
 interleave (x : xs) (y : ys) = x : y : (interleave xs ys)
 interleave xs [] = xs
 interleave [] ys = ys
 
+-- | Helper function for combining together two results from either 'proofs' or 'partialProofs'.
+-- @prioritizing f as bs@ will use @f@ to combine together either two lists of failures or two lists of successes.
+-- If we have one list of successes and one list of failures, we always take the successes.
+--
+-- The logic behind this is that if either 'Alt' or 'Interleave' have successes, then the failures aren't particularly interesting.
 prioritizing :: (forall a. [a] -> [a] -> [a])
              -> Either [b] [c]
              -> Either [b] [c]
@@ -198,8 +208,10 @@ proofs s p = go s [] pure p
       go s goals handlers (Stateful f) =
           let (s', p) = f s
           in go s' goals handlers p
-      go s goals handlers (Alt p1 p2) = liftA2 (prioritizing (<>)) (go s goals handlers p1) (go s goals handlers p2)
-      go s goals handlers (Interleave p1 p2) = liftA2 (prioritizing interleave) (go s goals handlers p1) (go s goals handlers p2)
+      go s goals handlers (Alt p1 p2) =
+          liftA2 (prioritizing (<>)) (go s goals handlers p1) (go s goals handlers p2)
+      go s goals handlers (Interleave p1 p2) =
+          liftA2 (prioritizing interleave) (go s goals handlers p1) (go s goals handlers p2)
       go s goals handlers (Commit p1 p2) = go s goals handlers p1 >>= \case
           Right solns | not (null solns) -> pure $ Right solns
           _                              -> go s goals handlers p2
@@ -209,9 +221,10 @@ proofs s p = go s [] pure p
           pure $ Left [annErr]
       go s goals handlers (Handle p h) =
           -- NOTE [Handler ordering]:
-          -- If we have multiple handlerss in scope, then we want the ones further down the stack to
-          -- run /first/. This allows the handlerss up the stack to add their annotations on top of the
+          -- If we have multiple handlers in scope, then we want the handlers closer to the error site to
+          -- run /first/. This allows the handlers up the stack to add their annotations on top of the
           -- ones lower down, which is the behavior that we desire.
+          -- IE: for @handler f >> handler g >> failure err@, @g@ ought to be run before @f@.
           go s goals (h >=> handlers) p
       go s goals _ (Axiom ext) = pure $ Right $ [Proof ext s goals]
 
@@ -270,7 +283,7 @@ instance (Monad m) => MonadState s (ProofStateT ext ext err s m) where
 axiom :: ext -> ProofStateT ext' ext err s m jdg
 axiom = Axiom
 
--- | @subgoals fs p@ will apply a list of functions producing a new 'ProofState' to each of the subgoals of @p@.
+-- | @subgoals fs p@ will apply a list of functions producing a new 'ProofState' to each of the subgoals of @p@ in order.
 -- If the list of functions is longer than the number of subgoals, then the extra functions are ignored.
 -- If the list of functions is shorter, then we simply apply @pure@ to all of the remaining subgoals.
 subgoals :: (Functor m) => [jdg -> ProofStateT ext ext err s m jdg] -> ProofStateT ext ext err s m jdg  -> ProofStateT ext ext err s m jdg
