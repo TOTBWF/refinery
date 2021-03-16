@@ -19,6 +19,7 @@ module Refinery.Tactic
   ( TacticT
   , runTacticT
   , runPartialTacticT
+  , solutions
   , Proof(..)
   , PartialProof(..)
   -- * Tactic Combinators
@@ -197,6 +198,10 @@ poke t k = tactic $ \j -> Subgoal ((), j) $ \ext -> do
 -- use 'runPartialTacticT'
 runTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m (Either [err] [(Proof ext s jdg)])
 runTacticT t j s = proofs s $ fmap snd $ proofState t j
+
+-- | Run a tactic, and get just the list of extracts, ignoring any other information.
+solutions :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m [ext]
+solutions t j s = either (const []) (map pf_extract) <$> runTacticT t j s
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 -- Note that this function will produce a so called "Partial Proof". This means that we no longer backtrack on errors,
