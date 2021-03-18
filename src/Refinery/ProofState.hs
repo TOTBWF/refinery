@@ -246,7 +246,7 @@ proofs s p = go s [] pure p
           liftA2 (prioritizing interleave) (go s goals handlers p1) (go s goals handlers p2)
       go s goals handlers (Commit p1 p2) = go s goals handlers p1 >>= \case
           Right solns | not (null solns) -> pure $ Right solns
-          _                              -> go s goals handlers p2
+          solns                          -> (prioritizing (<>) solns) <$> go s goals handlers p2
       go _ _ _ Empty = pure $ Left []
       go _ _ handlers (Failure err _) = do
           annErr <- handlers err
@@ -288,7 +288,7 @@ partialProofs s pf = go s [] [] pure pf
       go s goals errs handlers (Interleave p1 p2) = liftA2 (prioritizing interleave) (go s goals errs handlers p1) (go s goals errs handlers p2)
       go s goals errs handlers (Commit p1 p2) = go s goals errs handlers p1 >>= \case
           Right solns | not (null solns) -> pure $ Right solns
-          _                              -> go s goals errs handlers p2
+          solns                          -> (prioritizing (<>) solns) <$> go s goals errs handlers p2
       go _ _ _ _ Empty = pure $ Left []
       go s goals errs handlers (Failure err k) = do
           annErr <- handlers err
