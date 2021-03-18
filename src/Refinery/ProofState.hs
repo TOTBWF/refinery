@@ -12,6 +12,7 @@
 {-# LANGUAGE ScopedTypeVariables    #-}
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE UndecidableInstances   #-}
+{-# LANGUAGE ViewPatterns           #-}
 
 -----------------------------------------------------------------------------
 -- | The datatype that drives both Rules and Tactics
@@ -25,7 +26,25 @@
 -- Maintainer  :  reedmullanix@gmail.com
 --
 --
-module Refinery.ProofState where
+module Refinery.ProofState
+  ( ProofStateT(..)
+  -- * Proofstate Execution
+  , MonadExtract(..)
+  , Proof(..)
+  , PartialProof(..)
+  , proofs
+  , partialProofs
+  , subgoals
+  -- * Extract Manipulation
+  , mapExtract
+  -- * Speculative Execution
+  , MonadNamedExtract(..)
+  , MetaSubst(..)
+  , DependentMetaSubst(..)
+  , speculate
+  -- * Deprecated Functions
+  , axiom
+  ) where
 
 import           Control.Applicative
 import           Control.Monad
@@ -36,6 +55,8 @@ import qualified Control.Monad.Writer.Strict as SW
 import           Control.Monad.State
 import           Control.Monad.Morph
 import           Control.Monad.Reader
+
+import           Data.Bifunctor
 
 import           GHC.Generics
 
@@ -148,7 +169,7 @@ instance (Monad m) => MonadPlus (ProofStateT ext ext err s m) where
     mzero = empty
     mplus = (<|>)
 
-class (Monad m) => MonadExtract ext err m | m -> ext, m -> err where
+class (Monad m) => MonadExtract ext err m |  m -> ext, m -> err where
   -- | Generates a "hole" of type @ext@, which should represent
   -- an incomplete extract.
   hole :: m ext
@@ -162,6 +183,7 @@ class (Monad m) => MonadExtract ext err m | m -> ext, m -> err where
   unsolvableHole :: err -> m ext
   default unsolvableHole :: (MonadTrans t, MonadExtract ext err m1, m ~ t m1) => err -> m ext
   unsolvableHole = lift . unsolvableHole
+
 
 instance (MonadExtract ext err m) => MonadExtract ext err (ReaderT r m)
 instance (MonadExtract ext err m) => MonadExtract ext err (StateT s m)
@@ -309,6 +331,7 @@ subgoals fs (Handle p h) = Handle (subgoals fs p) h
 subgoals _ Empty = Empty
 subgoals _ (Axiom ext) = Axiom ext
 
+
 -- | @mapExtract f g p@ allows yout to modify the extract type of a ProofState.
 -- This witness the @Profunctor@ instance of 'ProofState', which we can't write without a newtype due to
 -- the position of the type variables
@@ -323,3 +346,37 @@ mapExtract _ _ Empty = Empty
 mapExtract into out (Failure err k) = Failure err (mapExtract into out . k . into)
 mapExtract into out (Handle p h) = Handle (mapExtract into out p) h
 mapExtract _ out (Axiom ext) = Axiom (out ext)
+
+class Monad m => MonadNamedExtract meta ext m | m -> ext, m ->  meta where
+    -- | Generates a "named hole". The @meta@ named returned should be able
+    -- to be substituted back in to the @ext@ in the future via 'MetaSubst'.
+    namedHole :: m (meta, ext)
+
+class MetaSubst meta ext where
+    -- | @substMeta meta e1 e2@ will substitute all occurances of @meta@ in @e2@ with @e1@.
+    substMeta :: meta -> ext -> ext -> ext
+
+class MetaSubst meta ext => DependentMetaSubst meta jdg ext where
+    -- | @dependentSubst meta e j@ will substitute all occurances of @meta@ in @j@ with @e@.
+    -- This method only really makes sense if you have goals that depend on earlier extracts.
+    -- If this isn't the case, don't implement this.
+    dependentSubst :: meta -> ext -> jdg -> jdg
+
+-- | @speculate p@ will record all of the subgoals that @p@ generates as part of the extraction process, and also remove all subgoal constructors
+-- by filling them with holes.
+speculate :: forall meta ext err s m jdg x. (MonadNamedExtract meta ext m) => ProofStateT ext ext err s m jdg -> ProofStateT ext ([(meta, jdg)], ext) err s m x
+speculate = go []
+    where
+      go :: [(meta, jdg)] -> ProofStateT ext ext err s m jdg -> ProofStateT ext ([(meta, jdg)], ext) err s m x
+      go goals (Subgoal goal k) = Effect $ do
+          (meta, h) <- namedHole
+          pure $ go (goals ++ [(meta, goal)]) (k h)
+      go goals (Effect m) = Effect (fmap (go goals) m)
+      go goals (Stateful st) = Stateful (second (go goals) . st)
+      go goals (Alt p1 p2) = Alt (go goals p1) (go goals p2)
+      go goals (Interleave p1 p2) = Interleave (go goals p1) (go goals p2)
+      go goals (Commit p1 p2) = Commit (go goals p1) (go goals p2)
+      go _     Empty = Empty
+      go goals (Failure err k) = Failure err (go goals . k)
+      go goals (Handle p h) = Handle (go goals p) h
+      go goals (Axiom ext) = Axiom (goals, ext)

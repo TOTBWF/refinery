@@ -27,6 +27,7 @@ module Refinery.Tactic.Internal
   ( TacticT(..)
   , tactic
   , proofState
+  , proofState_
   , mapTacticT
   -- * Rules
   , RuleT(..)
@@ -85,9 +86,13 @@ instance (Monoid jdg, Show a, Show jdg, Show err, Show ext, Show (m (ProofStateT
 tactic :: (jdg -> ProofStateT ext ext err s m (a, jdg)) -> TacticT jdg ext err s m a
 tactic t = TacticT $ StateT t
 
--- |  Helper function for deconstructing a tactic.
+-- | @proofState t j@ will deconstruct a tactic @t@ into a 'ProofStateT' by running it at @j@.
 proofState :: TacticT jdg ext err s m a -> jdg -> ProofStateT ext ext err s m (a, jdg)
 proofState t j = runStateT (unTacticT t) j
+
+-- | Like 'proofState', but we discard the return value of @t@.
+proofState_ :: (Functor m) => TacticT jdg ext err s m a -> jdg -> ProofStateT ext ext err s m jdg
+proofState_ t j = execStateT (unTacticT t) j
 
 -- | Map the unwrapped computation using the given function
 mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext err s m a -> TacticT jdg ext err s m b

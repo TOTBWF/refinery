@@ -34,8 +34,6 @@ module Refinery.Tactic
   , some_
   , choice
   , progress
-  , gather
-  , pruning
   , ensure
   -- * Errors and Error Handling
   , failure
@@ -43,8 +41,6 @@ module Refinery.Tactic
   , handler_
   -- * Extract Manipulation
   , tweak
-  , peek
-  , poke
   -- * Subgoal Manipulation
   , goal
   , inspect
@@ -56,14 +52,19 @@ module Refinery.Tactic
   , rule_
   , subgoal
   , unsolvable
+  -- * Introspection
+  , MonadNamedExtract(..)
+  , MetaSubst(..)
+  , DependentMetaSubst(..)
+  , reify
+  , resume
+  , resume'
   ) where
 
-import Data.Bifunctor
-import qualified Data.Monoid as Mon
-
 import Control.Applicative
-import Control.Monad.Except
-import Control.Monad.State.Strict
+import Control.Monad.State.Class
+
+import Data.Bifunctor
 
 import Refinery.ProofState
 import Refinery.Tactic.Internal
@@ -159,24 +160,6 @@ progress eq err t = do
   j' <- goal
   if j `eq` j' then pure a else failure err
 
--- | @gather t f@ runs the tactic @t@, then runs @f@ with all of the generated subgoals to determine
--- the next tactic to run.
-gather :: (MonadExtract ext err m) => TacticT jdg ext err s m a -> ([(a, jdg)] -> TacticT jdg ext err s m a) -> TacticT jdg ext err s m a
-gather t f = tactic $ \j -> do
-    s <- get
-    results <- lift $ proofs s $ proofState t j
-    case results of
-      Left errs -> Mon.getAlt $ foldMap (\err -> Mon.Alt $ Failure err Axiom) errs
-      Right pfs -> Mon.getAlt $ foldMap (\(Proof _ _ jdgs) -> Mon.Alt $ proofState (f jdgs) j) pfs
-
--- | @pruning t f@ runs the tactic @t@, and then applies a predicate to all of the generated subgoals.
-pruning
-    :: (MonadExtract ext err m)
-    => TacticT jdg ext err s m ()
-    -> ([jdg] -> Maybe err)
-    -> TacticT jdg ext err s m ()
-pruning t p = gather t $ maybe t failure . p . fmap snd
-
 -- | @ensure p f t@ runs the tactic @t@, and applies a predicate to the state after the execution of @t@. We also run
 -- a "cleanup" function @f@. Note that the predicate is applied to the state _before_ the cleanup function is run.
 ensure :: (Monad m) => (s -> Maybe err) -> (s -> s) -> TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
@@ -200,16 +183,6 @@ focus t n t' = t <@> (replicate n (pure ()) ++ [t'] ++ repeat (pure ()))
 -- | @tweak f t@ lets us modify the extract produced by the tactic @t@.
 tweak :: (Functor m) => (ext -> ext) -> TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
 tweak f t = tactic $ \j -> mapExtract id f $ proofState t j
-
--- | @peek t k@ lets us examine the extract produced by @t@, and then run a tactic based off it's value.
-peek :: (Functor m) => TacticT jdg ext err s m a -> (ext -> TacticT jdg ext err s m b) -> TacticT jdg ext err s m a
-peek t k = (tactic $ \j -> Subgoal ((), j) (\e -> fmap (first (const ())) $ proofState (k e) j)) >> t
-
--- | @poke t k@ lets us examine the extract produced by @t@, and then run a tactic that produces a new extract.
-poke :: (Functor m) => TacticT jdg ext err s m () -> (ext -> TacticT jdg ext err s m ext) -> TacticT jdg ext err s m ()
-poke t k = tactic $ \j -> Subgoal ((), j) $ \ext -> do
-    (ext', j') <- proofState (k ext) j
-    mapExtract id (const ext') $ proofState t j'
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 -- Note that this function will backtrack on errors. If you want a version that provides partial proofs,
@@ -238,3 +211,32 @@ rule r = tactic $ \j -> fmap ((),) $ unRuleT (r j)
 -- | Turn an inference rule into a tactic.
 rule_ :: (Monad m) => RuleT jdg ext err s m ext -> TacticT jdg ext err s m ()
 rule_ r = tactic $ \_ -> fmap ((),) $ unRuleT r
+
+-- | @reify t f@ will execute the tactic @t@, and resolve all of it's subgoals by filling them with holes.
+-- The resulting subgoals and partial extract are then passed to @f@.
+reify :: forall meta jdg ext err s m . (MonadNamedExtract meta ext m) => TacticT jdg ext err s m () -> ([(meta, jdg)] -> ext -> TacticT jdg ext err s m ()) -> TacticT jdg ext err s m ()
+reify t f = rule $ \j -> do
+    (goals, ext) <- RuleT $ speculate $ proofState_ t j
+    RuleT $ proofState_ (f goals ext) j
+
+-- | @resume goals partial@ allows for resumption of execution after a call to 'reify'.
+-- If your language doesn't support dependent subgoals, consider using @resume'@ instead.
+resume :: forall meta jdg ext err s m. (DependentMetaSubst meta jdg ext, Monad m) => [(meta, jdg)] -> ext -> TacticT jdg ext err s m ()
+resume goals partialExt = rule $ \_ -> do
+    solns <- dependentSubgoals goals
+    pure $ foldr (\(meta, soln) ext -> substMeta meta soln ext) partialExt solns
+    where
+      dependentSubgoals :: [(meta, jdg)] -> RuleT jdg ext err s m [(meta, ext)]
+      dependentSubgoals [] = pure []
+      dependentSubgoals ((meta, g) : gs) = do
+          soln <- subgoal g
+          solns <- dependentSubgoals $ fmap (second (dependentSubst meta soln)) gs
+          pure ((meta, soln) : solns)
+
+-- | A version of @resume@ that doesn't perform substitution into the goal types.
+-- This only makes sense if your language doesn't support dependent subgoals.
+-- If it does, use @resume@ instead, as this will leave the dependent subgoals with holes in them.
+resume' :: forall meta jdg ext err s m. (MetaSubst meta ext, Monad m) => [(meta, jdg)] -> ext -> TacticT jdg ext err s m ()
+resume' goals partialExt = rule $ \_ -> do
+    solns <- traverse (\(meta, g) -> (meta, ) <$> subgoal g) goals
+    pure $ foldr (\(meta, soln) ext -> substMeta meta soln ext) partialExt solns
