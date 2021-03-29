@@ -38,7 +38,6 @@ module Refinery.ProofState
   -- * Extract Manipulation
   , mapExtract
   -- * Speculative Execution
-  , MonadNamedExtract(..)
   , MetaSubst(..)
   , DependentMetaSubst(..)
   , speculate
@@ -55,8 +54,6 @@ import qualified Control.Monad.Writer.Strict as SW
 import           Control.Monad.State
 import           Control.Monad.Morph
 import           Control.Monad.Reader
-
-import           Data.Bifunctor
 
 import           GHC.Generics
 
@@ -169,35 +166,35 @@ instance (Monad m) => MonadPlus (ProofStateT ext ext err s m) where
     mzero = empty
     mplus = (<|>)
 
-class (Monad m) => MonadExtract ext err m |  m -> ext, m -> err where
+class (Monad m) => MonadExtract meta ext err s m | m -> ext, m -> err, ext -> meta where
   -- | Generates a "hole" of type @ext@, which should represent
   -- an incomplete extract.
-  hole :: m ext
-  default hole :: (MonadTrans t, MonadExtract ext err m1, m ~ t m1) => m ext
-  hole = lift hole
+  hole :: s -> m (meta, ext, s)
+  default hole :: (MonadTrans t, MonadExtract meta ext err s m1, m ~ t m1) => s -> m (meta, ext, s)
+  hole = lift . hole
 
   -- | Generates an "unsolvable hole" of type @err@, which should represent
   -- an incomplete extract that we have no hope of solving.
   --
   -- These will get generated when you generate partial extracts via 'runPartialTacticT'.
-  unsolvableHole :: err -> m ext
-  default unsolvableHole :: (MonadTrans t, MonadExtract ext err m1, m ~ t m1) => err -> m ext
-  unsolvableHole = lift . unsolvableHole
+  unsolvableHole :: s -> err -> m (meta, ext, s)
+  default unsolvableHole :: (MonadTrans t, MonadExtract meta ext err s m1, m ~ t m1) => s -> err -> m (meta, ext, s)
+  unsolvableHole s err = lift $ unsolvableHole s err
 
 
-instance (MonadExtract ext err m) => MonadExtract ext err (ReaderT r m)
-instance (MonadExtract ext err m) => MonadExtract ext err (StateT s m)
-instance (MonadExtract ext err m, Monoid w) => MonadExtract ext err (LW.WriterT w m)
-instance (MonadExtract ext err m, Monoid w) => MonadExtract ext err (SW.WriterT w m)
-instance (MonadExtract ext err m) => MonadExtract ext err (ExceptT err m)
+instance (MonadExtract meta ext err s m) => MonadExtract meta ext err s (ReaderT r m)
+instance (MonadExtract meta ext err s m) => MonadExtract meta ext err s (StateT s m)
+instance (MonadExtract meta ext err s m, Monoid w) => MonadExtract meta ext err s (LW.WriterT w m)
+instance (MonadExtract meta ext err s m, Monoid w) => MonadExtract meta ext err s (SW.WriterT w m)
+instance (MonadExtract meta ext err s m) => MonadExtract meta ext err s (ExceptT err m)
 
 -- | Represents a single result of the execution of some tactic.
-data Proof s goal ext = Proof
+data Proof s meta goal ext = Proof
     { pf_extract :: ext
     -- ^ The extract of the tactic.
     , pf_state :: s
     -- ^ The state at the end of tactic execution.
-    , pf_unsolvedGoals :: [goal]
+    , pf_unsolvedGoals :: [(meta, goal)]
     -- ^ All the goals that were still unsolved by the end of tactic execution.
     }
     deriving (Eq, Show, Generic)
@@ -229,13 +226,18 @@ prioritizing combine (Right b1) (Right b2) = Right $ b1 `combine` b2
 -- | Interpret a 'ProofStateT' into a list of (possibly incomplete) extracts.
 -- This function will cause a proof to terminate when it encounters a 'Failure', and will return a 'Left'.
 -- If you want to still recieve an extract even when you encounter a failure, you should use 'partialProofs'.
-proofs :: forall ext err s m goal. (MonadExtract ext err m) => s -> ProofStateT ext ext err s m goal -> m (Either [err] [(Proof s goal ext)])
+proofs :: forall ext err s m goal meta. (MonadExtract meta ext err s m) => s -> ProofStateT ext ext err s m goal -> m (Either [err] [(Proof s meta goal ext)])
 proofs s p = go s [] pure p
     where
-      go :: s -> [goal] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [err] [Proof s goal ext])
-      go s goals handlers (Subgoal goal k) = do
-         h <- hole
-         (go s (goals ++ [goal]) handlers $ k h)
+      go :: s -> [(meta, goal)] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [err] [Proof s meta goal ext])
+      go s goals _ (Subgoal goal k) = do
+         (meta, h, s') <- hole s
+         -- NOTE [Handler Reset]:
+         -- We reset the handler stack to avoid the handlers leaking across subgoals.
+         -- This would happen when we had a handler that wasn't followed by an error call.
+         --     pair >> goal >>= \g -> (handler_ $ \_ -> traceM $ "Handling " <> show g) <|> failure "Error"
+         -- We would see the "Handling a" message when solving for b.
+         (go s' (goals ++ [(meta, goal)]) pure $ k h)
       go s goals handlers (Effect m) = m >>= go s goals handlers
       go s goals handlers (Stateful f) =
           let (s', p) = f s
@@ -261,8 +263,8 @@ proofs s p = go s [] pure p
       go s goals _ (Axiom ext) = pure $ Right $ [Proof ext s goals]
 
 -- | The result of executing 'partialProofs'.
-data PartialProof s err goal ext
-    = PartialProof ext s [goal] [err]
+data PartialProof s err meta goal ext
+    = PartialProof ext s [(meta, goal)] [(meta, err)]
     -- ^ A so called "partial proof". These are proofs that encountered errors
     -- during execution.
     deriving (Eq, Show, Generic)
@@ -273,13 +275,14 @@ data PartialProof s err goal ext
 -- you should use 'proofs'.
 --
 -- This function will return all the 'SuccessfulProof' before the 'PartialProof'.
-partialProofs :: forall ext err s m goal. (MonadExtract ext err m) => s -> ProofStateT ext ext err s m goal -> m (Either [PartialProof s err goal ext] [Proof s goal ext])
+partialProofs :: forall meta ext err s m goal. (MonadExtract meta ext err s m) => s -> ProofStateT ext ext err s m goal -> m (Either [PartialProof s err meta goal ext] [Proof s meta goal ext])
 partialProofs s pf = go s [] [] pure pf
     where
-      go :: s -> [goal] -> [err] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [PartialProof s err goal ext] [Proof s goal ext])
-      go s goals errs handlers (Subgoal goal k) = do
-         h <- hole
-         go s (goals ++ [goal]) errs handlers $ k h
+      go :: s -> [(meta, goal)] -> [(meta, err)] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [PartialProof s err meta goal ext] [Proof s meta goal ext])
+      go s goals errs _ (Subgoal goal k) = do
+         (meta, h, s') <- hole s
+         -- See Note [Handler Reset]
+         go s' (goals ++ [(meta, goal)]) errs pure $ k h
       go s goals errs handlers (Effect m) = m >>= go s goals errs handlers
       go s goals errs handlers (Stateful f) =
           let (s', p) = f s
@@ -292,8 +295,8 @@ partialProofs s pf = go s [] [] pure pf
       go _ _ _ _ Empty = pure $ Left []
       go s goals errs handlers (Failure err k) = do
           annErr <- handlers err
-          h <- unsolvableHole annErr
-          go s goals (errs ++ [annErr]) handlers $ k h
+          (meta, h, s') <- unsolvableHole s annErr
+          go s' goals (errs ++ [(meta, annErr)]) handlers $ k h
       go s goals errs handlers (Handle p h) =
           -- See NOTE [Handler ordering]
           go s goals errs (h >=> handlers) p
@@ -331,7 +334,6 @@ subgoals fs (Handle p h) = Handle (subgoals fs p) h
 subgoals _ Empty = Empty
 subgoals _ (Axiom ext) = Axiom ext
 
-
 -- | @mapExtract f g p@ allows yout to modify the extract type of a ProofState.
 -- This witness the @Profunctor@ instance of 'ProofState', which we can't write without a newtype due to
 -- the position of the type variables
@@ -347,11 +349,6 @@ mapExtract into out (Failure err k) = Failure err (mapExtract into out . k . int
 mapExtract into out (Handle p h) = Handle (mapExtract into out p) h
 mapExtract _ out (Axiom ext) = Axiom (out ext)
 
-class Monad m => MonadNamedExtract meta ext m | m -> ext, m ->  meta where
-    -- | Generates a "named hole". The @meta@ named returned should be able
-    -- to be substituted back in to the @ext@ in the future via 'MetaSubst'.
-    namedHole :: m (meta, ext)
-
 class MetaSubst meta ext where
     -- | @substMeta meta e1 e2@ will substitute all occurances of @meta@ in @e2@ with @e1@.
     substMeta :: meta -> ext -> ext -> ext
@@ -362,21 +359,23 @@ class MetaSubst meta ext => DependentMetaSubst meta jdg ext where
     -- If this isn't the case, don't implement this.
     dependentSubst :: meta -> ext -> jdg -> jdg
 
--- | @speculate p@ will record all of the subgoals that @p@ generates as part of the extraction process, and also remove all subgoal constructors
--- by filling them with holes.
-speculate :: forall meta ext err s m jdg x. (MonadNamedExtract meta ext m) => ProofStateT ext ext err s m jdg -> ProofStateT ext ([(meta, jdg)], ext) err s m x
-speculate = go []
+-- | @speculate s p@ will record the current state of the proof as part of the extraction process.
+-- In doing so, this will also remove any subgoal constructors by filling them with holes.
+speculate :: forall meta ext err s m jdg x. (MonadExtract meta ext err s m) => s -> ProofStateT ext ext err s m jdg -> ProofStateT ext (Proof s meta jdg ext) err s m x
+speculate s = go s []
     where
-      go :: [(meta, jdg)] -> ProofStateT ext ext err s m jdg -> ProofStateT ext ([(meta, jdg)], ext) err s m x
-      go goals (Subgoal goal k) = Effect $ do
-          (meta, h) <- namedHole
-          pure $ go (goals ++ [(meta, goal)]) (k h)
-      go goals (Effect m) = Effect (fmap (go goals) m)
-      go goals (Stateful st) = Stateful (second (go goals) . st)
-      go goals (Alt p1 p2) = Alt (go goals p1) (go goals p2)
-      go goals (Interleave p1 p2) = Interleave (go goals p1) (go goals p2)
-      go goals (Commit p1 p2) = Commit (go goals p1) (go goals p2)
-      go _     Empty = Empty
-      go goals (Failure err k) = Failure err (go goals . k)
-      go goals (Handle p h) = Handle (go goals p) h
-      go goals (Axiom ext) = Axiom (goals, ext)
+      go :: s -> [(meta, jdg)] -> ProofStateT ext ext err s m jdg -> ProofStateT ext (Proof s meta jdg ext) err s m x
+      go s goals (Subgoal goal k) = Effect $ do
+          (meta, h, s') <- hole s
+          pure $ go s' (goals ++ [(meta, goal)]) (k h)
+      go s goals (Effect m) = Effect (fmap (go s goals) m)
+      go s goals (Stateful st) =
+          let (s', p) = st s
+          in go s' goals p
+      go s goals (Alt p1 p2) = Alt (go s goals p1) (go s goals p2)
+      go s goals (Interleave p1 p2) = Interleave (go s goals p1) (go s goals p2)
+      go s goals (Commit p1 p2) = Commit (go s goals p1) (go s goals p2)
+      go _ _     Empty = Empty
+      go s goals (Failure err k) = Failure err (go s goals . k)
+      go s goals (Handle p h) = Handle (go s goals p) h
+      go s goals (Axiom ext) = Axiom (Proof ext s goals)

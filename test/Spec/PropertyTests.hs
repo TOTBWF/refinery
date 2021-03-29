@@ -33,17 +33,17 @@ testBatch (batchName, tests) = describe ("laws for: " ++ batchName) $
   traverse_ (uncurry it) tests
 
 
-instance (EqProp ext, EqProp s, EqProp jdg) => EqProp (Proof s jdg ext) where
+instance (EqProp ext, EqProp meta, EqProp s, EqProp jdg) => EqProp (Proof s meta jdg ext) where
 
-instance (MonadExtract ext err m, EqProp (m (Either [err] [Proof s a ext])), Arbitrary s)
+instance (MonadExtract meta ext err s m, EqProp (m (Either [err] [Proof s meta a ext])), Arbitrary s)
       => EqProp (ProofStateT ext ext err s m a) where
   (=-=) a b = property $ do
     s <- arbitrary
     pure $ ((=-=) `on` proofs s) a b
 
-instance ( MonadExtract ext err m
+instance ( MonadExtract meta ext err s m
          , Arbitrary jdg
-         , EqProp (m (Either [err] [Proof s jdg ext]))
+         , EqProp (m (Either [err] [Proof s meta jdg ext]))
          , Show s
          , Arbitrary s
          , Show jdg
@@ -52,17 +52,17 @@ instance ( MonadExtract ext err m
   (=-=) = (=-=) `on` runTacticT . (() <$)
 
 instance ( Arbitrary jdg
-         , EqProp (m (Either [err] [Proof s jdg ext]))
-         , MonadExtract ext err m
+         , EqProp (m (Either [err] [Proof s meta jdg ext]))
+         , MonadExtract meta ext err s m
          , Arbitrary s
          , Show s , Show jdg
          )
       => EqProp (RuleT jdg ext err s m ext) where
   (=-=) = (=-=) `on` rule . const
 
-instance MonadExtract Int String Identity where
-  hole = pure 0
-  unsolvableHole _ = pure 0
+instance MonadExtract Int Int String Int Identity where
+  hole i = pure (i,0,i + 1)
+  unsolvableHole i _ = pure (i, 0, i + 1)
 
 instance ( CoArbitrary ext'
          , Arbitrary ext
@@ -177,9 +177,9 @@ rightAltBind m1 m2 m3 =
   (m1 >> (m2 <|> m3)) =-= ((m1 >> m2) <|> (m1 >> m3))
 
 interleaveMZero
-    :: forall m a jdg ext err s
-     . (MonadExtract ext err m
-       , EqProp (m (Either [err] [Proof s jdg ext]))
+    :: forall m a meta jdg ext err s
+     . (MonadExtract meta ext err s m
+       , EqProp (m (Either [err] [Proof s meta jdg ext]))
        , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy
@@ -189,9 +189,9 @@ interleaveMZero _ m =
     (mzero <%> m) =-= m
 
 interleaveMPlus
-    :: forall m a jdg ext err s
-     . (MonadExtract ext err m
-       , EqProp (m (Either [err] [Proof s jdg ext]))
+    :: forall m a meta jdg ext err s
+     . (MonadExtract meta ext err s m
+       , EqProp (m (Either [err] [Proof s meta jdg ext]))
        , Show s , Show jdg
        , Arbitrary jdg, Arbitrary s)
     => TacticT jdg ext err s m a  -- ^ proxy

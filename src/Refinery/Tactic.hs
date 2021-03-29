@@ -53,7 +53,6 @@ module Refinery.Tactic
   , subgoal
   , unsolvable
   -- * Introspection
-  , MonadNamedExtract(..)
   , MetaSubst(..)
   , DependentMetaSubst(..)
   , reify
@@ -187,11 +186,11 @@ tweak f t = tactic $ \j -> mapExtract id f $ proofState t j
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
 -- Note that this function will backtrack on errors. If you want a version that provides partial proofs,
 -- use 'runPartialTacticT'
-runTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m (Either [err] [(Proof s jdg ext)])
+runTacticT :: (MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> jdg -> s -> m (Either [err] [(Proof s meta jdg ext)])
 runTacticT t j s = proofs s $ fmap snd $ proofState t j
 
 -- | Run a tactic, and get just the list of extracts, ignoring any other information.
-evalTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m [ext]
+evalTacticT :: (MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> jdg -> s -> m [ext]
 evalTacticT t j s = either (const []) (map pf_extract) <$> runTacticT t j s
 
 -- | Runs a tactic, producing a list of possible extracts, along with a list of unsolved subgoals.
@@ -201,7 +200,7 @@ evalTacticT t j s = either (const []) (map pf_extract) <$> runTacticT t j s
 --
 -- Note that this version is inherently slower than 'runTacticT', as it needs to continue producing extracts.
 -- Furthermore, it will return all of the 'SuccessfulProof' before the 'PartialProof'.
-runPartialTacticT :: (MonadExtract ext err m) => TacticT jdg ext err s m () -> jdg -> s -> m (Either [PartialProof s err jdg ext] [(Proof s jdg ext)])
+runPartialTacticT :: (MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> jdg -> s -> m (Either [PartialProof s err meta jdg ext] [(Proof s meta jdg ext)])
 runPartialTacticT t j s = partialProofs s $ fmap snd $ proofState t j
 
 -- | Turn an inference rule that examines the current goal into a tactic.
@@ -214,15 +213,17 @@ rule_ r = tactic $ \_ -> fmap ((),) $ unRuleT r
 
 -- | @reify t f@ will execute the tactic @t@, and resolve all of it's subgoals by filling them with holes.
 -- The resulting subgoals and partial extract are then passed to @f@.
-reify :: forall meta jdg ext err s m . (MonadNamedExtract meta ext m) => TacticT jdg ext err s m () -> ([(meta, jdg)] -> ext -> TacticT jdg ext err s m ()) -> TacticT jdg ext err s m ()
+reify :: forall meta jdg ext err s m . (MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> (Proof s meta jdg ext -> TacticT jdg ext err s m ()) -> TacticT jdg ext err s m ()
 reify t f = rule $ \j -> do
-    (goals, ext) <- RuleT $ speculate $ proofState_ t j
-    RuleT $ proofState_ (f goals ext) j
+    s <- get
+    pf <- RuleT $ speculate s $ proofState_ t j
+    RuleT $ proofState_ (f pf) j
 
 -- | @resume goals partial@ allows for resumption of execution after a call to 'reify'.
 -- If your language doesn't support dependent subgoals, consider using @resume'@ instead.
-resume :: forall meta jdg ext err s m. (DependentMetaSubst meta jdg ext, Monad m) => [(meta, jdg)] -> ext -> TacticT jdg ext err s m ()
-resume goals partialExt = rule $ \_ -> do
+resume :: forall meta jdg ext err s m. (DependentMetaSubst meta jdg ext, Monad m) => Proof s meta jdg ext -> TacticT jdg ext err s m ()
+resume (Proof partialExt s goals) = rule $ \_ -> do
+    put s
     solns <- dependentSubgoals goals
     pure $ foldr (\(meta, soln) ext -> substMeta meta soln ext) partialExt solns
     where
@@ -236,7 +237,8 @@ resume goals partialExt = rule $ \_ -> do
 -- | A version of @resume@ that doesn't perform substitution into the goal types.
 -- This only makes sense if your language doesn't support dependent subgoals.
 -- If it does, use @resume@ instead, as this will leave the dependent subgoals with holes in them.
-resume' :: forall meta jdg ext err s m. (MetaSubst meta ext, Monad m) => [(meta, jdg)] -> ext -> TacticT jdg ext err s m ()
-resume' goals partialExt = rule $ \_ -> do
+resume' :: forall meta jdg ext err s m. (MetaSubst meta ext, Monad m) => Proof s meta jdg ext -> TacticT jdg ext err s m ()
+resume' (Proof partialExt s goals) = rule $ \_ -> do
+    put s
     solns <- traverse (\(meta, g) -> (meta, ) <$> subgoal g) goals
     pure $ foldr (\(meta, soln) ext -> substMeta meta soln ext) partialExt solns

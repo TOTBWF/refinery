@@ -15,16 +15,13 @@ import Data.List
 import Data.String (IsString(..))
 
 import Control.Applicative
+import Control.Monad.Identity
 import Control.Monad.State
-
-import Control.Monad.ST
-import Data.STRef
 
 import Refinery.ProofState
 import Refinery.Tactic
 
 import Test.Hspec
-import Control.Monad.Reader
 
 -- Just a very simple version of Simply Typed Lambda Calculus,
 -- augmented with 'Hole' so that we can have
@@ -44,6 +41,15 @@ data Type
   | TPair Type Type
   deriving (Show, Eq)
 
+data TacticState = TacticState { name :: Int, meta :: Int }
+    deriving Show
+
+fresh :: MonadState TacticState m => m String
+fresh = do
+    nm <- gets (show . name)
+    modify (\s -> s { name = name s + 1 })
+    pure nm
+
 infixr 4 :->
 
 instance IsString Type where
@@ -53,24 +59,13 @@ instance IsString Type where
 data Judgement = [(String, Type)] :- Type
   deriving (Show, Eq)
 
-newtype FreshM s a = FreshM { runFreshM :: ReaderT (STRef s Int) (ST s) a }
-    deriving (Functor, Applicative, Monad)
-
-fresh :: FreshM s Int
-fresh = FreshM $ do
-  ref <- ask
-  i <- lift $ readSTRef ref
-  lift $ modifySTRef' ref (+ 1)
-  pure i
-
-instance MonadExtract Term String (FreshM s) where
-    hole = Hole <$> fresh
-    unsolvableHole _ = Hole <$> fresh
-
-instance MonadNamedExtract Int Term (FreshM s) where
-    namedHole = do
-        i <- fresh
-        return (i, Hole i)
+instance MonadExtract Int Term String TacticState Identity where
+    hole s =
+        let m = meta s
+        in pure (m, Hole m, s { meta = 1 + m })
+    unsolvableHole s _ =
+        let m = meta s
+        in pure (m, Hole m, s { meta = 1 + m })
 
 instance MetaSubst Int Term where
     substMeta _ _ (Var s) = Var s
@@ -78,70 +73,66 @@ instance MetaSubst Int Term where
     substMeta i t1 (Lam s body) = Lam s (substMeta i t1 body)
     substMeta i t1 (Pair l r) = Pair (substMeta i t1 l) (substMeta i t1 r)
 
-type T s a = TacticT Judgement Term String Int (FreshM s) a
+type T a = TacticT Judgement Term String TacticState Identity a
 
-pair :: T s ()
+pair :: T ()
 pair = rule $ \case
     (hys :- TPair a b) -> Pair <$> subgoal (hys :- a) <*> subgoal (hys :- b)
     _                  -> unsolvable "goal mismatch: Pair"
 
-lam :: T s ()
+lam :: T ()
 lam = rule $ \case
     (hys :- (a :-> b)) -> do
-        name <- gets show
-        modify (+ 1)
-        body <- subgoal $ ((name, a) : hys) :- b
-        pure $ Lam name body
+        nm <- fresh
+        body <- subgoal $ ((nm, a) : hys) :- b
+        pure $ Lam nm body
     _                  -> unsolvable "goal mismatch: Lam"
 
-assumption :: T s ()
+assumption :: T ()
 assumption = rule $ \ (hys :- a) ->
   case find (\(_, ty) -> ty == a) hys of
     Just (x, _) -> pure $ Var x
     Nothing     -> unsolvable "goal mismatch: Assumption"
 
-auto :: T s ()
+auto :: T ()
 auto = do
     many_ lam
     choice [ pair >> auto
            , assumption
            ]
 
-refine :: T s ()
+refine :: T ()
 refine = do
     many_ lam
     try pair
 
-testHandlers :: T s ()
+testHandlers :: T ()
 testHandlers = do
     handler (\err -> pure $ err ++ " Third")
     handler (\err -> pure $ err ++ " Second")
     failure "First"
 
-testHandlerAlt :: T s ()
+testHandlerAlt :: T ()
 testHandlerAlt = do
     handler (\err -> pure $ err ++ " Handled")
     (failure "Error1") <|> (failure "Error2")
 
-testReify :: T s ()
+testReify :: T ()
 testReify = do
     lam
     lam
-    reify pair $ \ goals _ -> failure $ "Generated " <> show (length goals) <> " subgoals"
+    reify pair $ \ (Proof _ _ goals) -> failure $ "Generated " <> show (length goals) <> " subgoals"
 
 jdg :: Judgement
 jdg = ([] :- ("a" :-> "b" :-> (TPair "a" "b")))
 
-evalT :: (forall s. T s ()) -> Judgement -> Int -> Either [String] [Term]
-evalT t j s = runST $ do
-    ref <- newSTRef 0
-    results <- flip runReaderT ref $ runFreshM $ runTacticT t j s
-    pure $ fmap (fmap pf_extract) results
+evalT :: T () -> Judgement -> Either [String] [Term]
+evalT t j = fmap (fmap pf_extract) $ runIdentity $ runTacticT t j (TacticState 0 0)
 
 stlcTests :: Spec
 stlcTests = do
     describe "Simply Typed Lambda Calculus" $ do
-        it "auto synthesize a solution" $ (evalT auto jdg 0) `shouldBe` (Right [(Lam "0" $ Lam "1" $ Pair (Var "0") (Var "1"))])
-        it "handler ordering is correct" $ (evalT testHandlers jdg 0) `shouldBe` (Left ["First Second Third"])
-        it "handler works through alt" $ (evalT testHandlerAlt jdg 0) `shouldBe` (Left ["Error1 Handled","Error2 Handled"])
-        it "reify gets the right subgoals" $ (evalT testReify jdg 0) `shouldBe` (Left ["Generated 2 subgoals"])
+        it "auto synthesize a solution" $ (evalT auto jdg) `shouldBe` (Right [(Lam "0" $ Lam "1" $ Pair (Var "0") (Var "1"))])
+        it "handler ordering is correct" $ (evalT testHandlers jdg) `shouldBe` (Left ["First Second Third"])
+        it "handler works through alt" $ (evalT testHandlerAlt jdg) `shouldBe` (Left ["Error1 Handled","Error2 Handled"])
+        it "reify gets the right subgoals" $ (evalT testReify jdg) `shouldBe` (Left ["Generated 2 subgoals"])
