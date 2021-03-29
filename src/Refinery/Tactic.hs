@@ -58,6 +58,8 @@ module Refinery.Tactic
   , reify
   , resume
   , resume'
+  , pruning
+  , attempt
   ) where
 
 import Control.Applicative
@@ -210,13 +212,17 @@ rule r = tactic $ \j -> fmap ((),) $ unRuleT (r j)
 rule_ :: (Monad m) => RuleT jdg ext err s m ext -> TacticT jdg ext err s m ()
 rule_ r = tactic $ \_ -> fmap ((),) $ unRuleT r
 
+introspect :: (MonadExtract meta ext err s m) => TacticT jdg ext err s m a -> (err -> TacticT jdg ext err s m ()) -> (Proof s meta jdg ext -> TacticT jdg ext err s m ()) -> TacticT jdg ext err s m ()
+introspect t handle f = rule $ \j -> do
+    s <- get
+    (RuleT $ speculate s $ proofState_ t j) >>= \case
+      Left err -> RuleT $ proofState_ (handle err) j
+      Right pf -> RuleT $ proofState_ (f pf) j
+
 -- | @reify t f@ will execute the tactic @t@, and resolve all of it's subgoals by filling them with holes.
 -- The resulting subgoals and partial extract are then passed to @f@.
 reify :: forall meta jdg ext err s m . (MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> (Proof s meta jdg ext -> TacticT jdg ext err s m ()) -> TacticT jdg ext err s m ()
-reify t f = rule $ \j -> do
-    s <- get
-    pf <- RuleT $ speculate s $ proofState_ t j
-    RuleT $ proofState_ (f pf) j
+reify t f = introspect t failure f
 
 -- | @resume goals partial@ allows for resumption of execution after a call to 'reify'.
 -- If your language doesn't support dependent subgoals, consider using @resume'@ instead.
@@ -241,3 +247,15 @@ resume' (Proof partialExt s goals) = rule $ \_ -> do
     put s
     solns <- traverse (\(meta, g) -> (meta, ) <$> subgoal g) goals
     pure $ foldr (\(meta, soln) ext -> substMeta meta soln ext) partialExt solns
+
+-- | @pruning t p@ will execute @t@, and then apply @p@ to any subgoals it generates. If these predicate returns an error, we terminate the execution.
+-- Otherwise, we resume execution via 'resume''.
+pruning :: (MetaSubst meta ext, MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> ([jdg] -> Maybe err) -> TacticT jdg ext err s m ()
+pruning t p = reify t $ \pf -> case (p $ fmap snd $ pf_unsolvedGoals pf) of
+  Just err -> failure err
+  Nothing ->  resume' pf
+
+-- | @attempt t1 t2@ will partially execute @t1@, inspect it's result, and only run @t2@ if it fails.
+-- If @t1@ succeeded, we will 'resume'' execution of it.
+attempt :: (MonadExtract meta ext err s m, MetaSubst meta ext) => TacticT jdg ext err s m () -> TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
+attempt t1 t2 = introspect t1 (\_ -> t2) resume'

@@ -364,21 +364,34 @@ class MetaSubst meta ext => DependentMetaSubst meta jdg ext where
 
 -- | @speculate s p@ will record the current state of the proof as part of the extraction process.
 -- In doing so, this will also remove any subgoal constructors by filling them with holes.
-speculate :: forall meta ext err s m jdg x. (MonadExtract meta ext err s m) => s -> ProofStateT ext ext err s m jdg -> ProofStateT ext (Proof s meta jdg ext) err s m x
-speculate s = go s []
+speculate :: forall meta ext err s m jdg x. (MonadExtract meta ext err s m) => s -> ProofStateT ext ext err s m jdg -> ProofStateT ext (Either err (Proof s meta jdg ext)) err s m x
+speculate s = go s [] pure
     where
-      go :: s -> [(meta, jdg)] -> ProofStateT ext ext err s m jdg -> ProofStateT ext (Proof s meta jdg ext) err s m x
-      go s goals (Subgoal goal k) = Effect $ do
+      go :: s -> [(meta, jdg)] -> (err -> m err) -> ProofStateT ext ext err s m jdg -> ProofStateT ext (Either err (Proof s meta jdg ext)) err s m x
+      go s goals _ (Subgoal goal k) = Effect $ do
           (meta, h, s') <- hole s
-          pure $ go s' (goals ++ [(meta, goal)]) (k h)
-      go s goals (Effect m) = Effect (fmap (go s goals) m)
-      go s goals (Stateful st) =
+          -- See Note [Handler Reset]
+          pure $ go s' (goals ++ [(meta, goal)]) pure (k h)
+      go s goals handler (Effect m) = Effect (fmap (go s goals handler) m)
+      go s goals handler (Stateful st) =
           let (s', p) = st s
-          in go s' goals p
-      go s goals (Alt p1 p2) = Alt (go s goals p1) (go s goals p2)
-      go s goals (Interleave p1 p2) = Interleave (go s goals p1) (go s goals p2)
-      go s goals (Commit p1 p2) = Commit (go s goals p1) (go s goals p2)
-      go _ _     Empty = Empty
-      go s goals (Failure err k) = Failure err (go s goals . k)
-      go s goals (Handle p h) = Handle (go s goals p) h
-      go s goals (Axiom ext) = Axiom (Proof ext s goals)
+          in go s' goals handler p
+      go s goals handler (Alt p1 p2) = Alt (go s goals handler p1) (go s goals handler p2)
+      go s goals handler (Interleave p1 p2) = Interleave (go s goals handler p1) (go s goals handler p2)
+      go s goals handler (Commit p1 p2) = Commit (go s goals handler p1) (go s goals handler p2)
+      go _ _     _       Empty = Empty
+      go _ _     handler (Failure err _) = Effect $ do
+          annErr <- handler err
+          pure $ Axiom $ Left annErr
+      go s goals handler (Handle p h) =
+          -- Note [Speculation + Handler]:
+          -- When speculating, we want to _keep_ any handlers in place, as well as using them to annotate any errors.
+          -- For instance, consider:
+          --     reify (handler_ h >> failure "Error 1") $ \_ -> failure "Error 2"
+          --
+          -- We want the handler installed as a part of the reify to be executed when the failure happens
+          -- in the tactic we are reifing, _and_ also when the subsequent failure happens.
+          --
+          -- See Note [Handler Ordering] as well for more details on the @h >=> handler@ bit.
+          Handle (go s goals (h >=> handler) p) h
+      go s goals _       (Axiom ext) = Axiom $ Right (Proof ext s goals)
