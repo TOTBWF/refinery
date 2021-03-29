@@ -199,7 +199,6 @@ evalTacticT t j s = either (const []) (map pf_extract) <$> runTacticT t j s
 -- If you want a version that backgracks on errors, see 'runTacticT'.
 --
 -- Note that this version is inherently slower than 'runTacticT', as it needs to continue producing extracts.
--- Furthermore, it will return all of the 'SuccessfulProof' before the 'PartialProof'.
 runPartialTacticT :: (MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> jdg -> s -> m (Either [PartialProof s err meta jdg ext] [(Proof s meta jdg ext)])
 runPartialTacticT t j s = partialProofs s $ fmap snd $ proofState t j
 

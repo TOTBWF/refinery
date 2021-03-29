@@ -41,8 +41,6 @@ module Refinery.ProofState
   , MetaSubst(..)
   , DependentMetaSubst(..)
   , speculate
-  -- * Deprecated Functions
-  , axiom
   ) where
 
 import           Control.Applicative
@@ -166,8 +164,11 @@ instance (Monad m) => MonadPlus (ProofStateT ext ext err s m) where
     mzero = empty
     mplus = (<|>)
 
+-- | 'MonadExtract' describes the effects required to generate named holes.
+-- The @meta@ type parameter here is a so called "metavariable", which can be thought of as
+-- a name for a hole.
 class (Monad m) => MonadExtract meta ext err s m | m -> ext, m -> err, ext -> meta where
-  -- | Generates a "hole" of type @ext@, which should represent
+  -- | Generates a named "hole" of type @ext@, which should represent
   -- an incomplete extract.
   hole :: s -> m (meta, ext, s)
   default hole :: (MonadTrans t, MonadExtract meta ext err s m1, m ~ t m1) => s -> m (meta, ext, s)
@@ -176,7 +177,7 @@ class (Monad m) => MonadExtract meta ext err s m | m -> ext, m -> err, ext -> me
   -- | Generates an "unsolvable hole" of type @err@, which should represent
   -- an incomplete extract that we have no hope of solving.
   --
-  -- These will get generated when you generate partial extracts via 'runPartialTacticT'.
+  -- These will get generated when you generate partial extracts via 'Refinery.Tactic.runPartialTacticT'.
   unsolvableHole :: s -> err -> m (meta, ext, s)
   default unsolvableHole :: (MonadTrans t, MonadExtract meta ext err s m1, m ~ t m1) => s -> err -> m (meta, ext, s)
   unsolvableHole s err = lift $ unsolvableHole s err
@@ -273,8 +274,6 @@ data PartialProof s err meta goal ext
 -- This function will continue producing an extract when it encounters a 'Failure', leaving
 -- a hole in the extract in it's place. If you want the extraction to terminate when you encounter an error,
 -- you should use 'proofs'.
---
--- This function will return all the 'SuccessfulProof' before the 'PartialProof'.
 partialProofs :: forall meta ext err s m goal. (MonadExtract meta ext err s m) => s -> ProofStateT ext ext err s m goal -> m (Either [PartialProof s err meta goal ext] [Proof s meta goal ext])
 partialProofs s pf = go s [] [] pure pf
     where
@@ -314,11 +313,7 @@ instance (Monad m) => MonadState s (ProofStateT ext ext err s m) where
       let (a, s') = f s
       in (s', pure a)
 
-{-# DEPRECATED axiom "Use Axiom instead" #-}
-axiom :: ext -> ProofStateT ext' ext err s m jdg
-axiom = Axiom
-
--- | @subgoals fs p@ will apply a list of functions producing a new 'ProofState' to each of the subgoals of @p@ in order.
+-- | @subgoals fs p@ will apply a list of functions producing a new 'ProofStateT' to each of the subgoals of @p@ in order.
 -- If the list of functions is longer than the number of subgoals, then the extra functions are ignored.
 -- If the list of functions is shorter, then we simply apply @pure@ to all of the remaining subgoals.
 subgoals :: (Functor m) => [jdg -> ProofStateT ext ext err s m jdg] -> ProofStateT ext ext err s m jdg  -> ProofStateT ext ext err s m jdg
@@ -335,7 +330,7 @@ subgoals _ Empty = Empty
 subgoals _ (Axiom ext) = Axiom ext
 
 -- | @mapExtract f g p@ allows yout to modify the extract type of a ProofState.
--- This witness the @Profunctor@ instance of 'ProofState', which we can't write without a newtype due to
+-- This witness the @Profunctor@ instance of 'ProofStateT', which we can't write without a newtype due to
 -- the position of the type variables
 mapExtract :: (Functor m) => (a -> ext') -> (ext -> b) -> ProofStateT ext' ext err s m jdg -> ProofStateT a b err s m jdg
 mapExtract into out (Subgoal goal k) = Subgoal goal (mapExtract into out . k . into)
@@ -349,10 +344,18 @@ mapExtract into out (Failure err k) = Failure err (mapExtract into out . k . int
 mapExtract into out (Handle p h) = Handle (mapExtract into out p) h
 mapExtract _ out (Axiom ext) = Axiom (out ext)
 
-class MetaSubst meta ext where
+-- | 'MetaSubst' captures the notion of substituting metavariables of type @meta@ into an extract of type @ext@.
+-- Note that these substitutions should most likely _not_ be capture avoiding.
+class MetaSubst meta ext | ext -> meta where
     -- | @substMeta meta e1 e2@ will substitute all occurances of @meta@ in @e2@ with @e1@.
     substMeta :: meta -> ext -> ext -> ext
 
+-- | 'DependentMetaSubst' captures the notion of substituting metavariables of type @meta@ into judgements of type @jdg@.
+-- This really only matters when you are dealing with dependent types, specifically existentials.
+-- For instance, consider the goal
+--     Σ (x : A) (B x)
+-- The type of the second goal we would produce here _depends_ on the solution to the first goal,
+-- so we need to know how to substitute holes in judgements in order to properly implement 'Refinery.Tactic.resume'.
 class MetaSubst meta ext => DependentMetaSubst meta jdg ext where
     -- | @dependentSubst meta e j@ will substitute all occurances of @meta@ in @j@ with @e@.
     -- This method only really makes sense if you have goals that depend on earlier extracts.
