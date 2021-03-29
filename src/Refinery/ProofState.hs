@@ -233,7 +233,7 @@ proofs s p = go s [] pure p
       go :: s -> [(meta, goal)] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [err] [Proof s meta goal ext])
       go s goals _ (Subgoal goal k) = do
          (meta, h, s') <- hole s
-         -- NOTE [Handler Reset]:
+         -- Note [Handler Reset]:
          -- We reset the handler stack to avoid the handlers leaking across subgoals.
          -- This would happen when we had a handler that wasn't followed by an error call.
          --     pair >> goal >>= \g -> (handler_ $ \_ -> traceM $ "Handling " <> show g) <|> failure "Error"
@@ -255,7 +255,7 @@ proofs s p = go s [] pure p
           annErr <- handlers err
           pure $ Left [annErr]
       go s goals handlers (Handle p h) =
-          -- NOTE [Handler ordering]:
+          -- Note [Handler ordering]:
           -- If we have multiple handlers in scope, then we want the handlers closer to the error site to
           -- run /first/. This allows the handlers up the stack to add their annotations on top of the
           -- ones lower down, which is the behavior that we desire.
@@ -297,7 +297,7 @@ partialProofs s pf = go s [] [] pure pf
           (meta, h, s') <- unsolvableHole s annErr
           go s' goals (errs ++ [(meta, annErr)]) handlers $ k h
       go s goals errs handlers (Handle p h) =
-          -- See NOTE [Handler ordering]
+          -- See Note [Handler ordering]
           go s goals errs (h >=> handlers) p
       go s goals [] _ (Axiom ext) = pure $ Right [Proof ext s goals]
       go s goals errs _ (Axiom ext) = pure $ Left [PartialProof ext s goals errs]
