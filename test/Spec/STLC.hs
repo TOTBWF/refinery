@@ -126,9 +126,9 @@ testReify = do
 testAttempt :: T ()
 testAttempt = do
     lam
-    attempt pair lam
+    attempt lam (failure "Bad Stuff")
     _ :- g <- goal
-    failure $ show g
+    failure $ "Good Stuff"
 
 jdg :: Judgement
 jdg = ([] :- ("a" :-> "b" :-> (TPair "a" "b")))
@@ -143,4 +143,4 @@ stlcTests = do
         it "handler ordering is correct" $ (evalT testHandlers jdg) `shouldBe` (Left ["First Second Third"])
         it "handler works through alt" $ (evalT testHandlerAlt jdg) `shouldBe` (Left ["Error1 Handled","Error2 Handled"])
         it "reify gets the right subgoals" $ (evalT testReify jdg) `shouldBe` (Left ["Generated 2 subgoals"])
-        it "attempt properly handles errors" $ (evalT testAttempt jdg) `shouldBe` (Left ["TPair (TVar \"a\") (TVar \"b\")"])
+        it "attempt properly handles errors" $ (evalT testAttempt jdg) `shouldBe` (Left ["Good Stuff"])
