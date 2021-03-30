@@ -59,6 +59,7 @@ module Refinery.Tactic
   , resume
   , resume'
   , pruning
+  , peek
   , attempt
   ) where
 
@@ -248,10 +249,19 @@ resume' (Proof partialExt s goals) = rule $ \_ -> do
     solns <- traverse (\(meta, g) -> (meta, ) <$> subgoal g) goals
     pure $ foldr (\(meta, soln) ext -> substMeta meta soln ext) partialExt solns
 
--- | @pruning t p@ will execute @t@, and then apply @p@ to any subgoals it generates. If these predicate returns an error, we terminate the execution.
+-- | @pruning t p@ will execute @t@, and then apply @p@ to any subgoals it generates. If this predicate returns an error, we terminate the execution.
 -- Otherwise, we resume execution via 'resume''.
 pruning :: (MetaSubst meta ext, MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> ([jdg] -> Maybe err) -> TacticT jdg ext err s m ()
 pruning t p = reify t $ \pf -> case (p $ fmap snd $ pf_unsolvedGoals pf) of
+  Just err -> failure err
+  Nothing ->  resume' pf
+
+-- | @peek t p@ will execute @t@, and then apply @p@ to the extract it produces. If this predicate returns an error, we terminate the execution.
+-- Otherwise, we resume execution via 'resume''.
+--
+-- Note that the extract produced may contain holes, as it is the extract produced by running _just_ @t@ against the current goal.
+peek :: (MetaSubst meta ext, MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> (ext -> Maybe err) -> TacticT jdg ext err s m ()
+peek t p = reify t $ \pf -> case (p $ pf_extract pf) of
   Just err -> failure err
   Nothing ->  resume' pf
 
