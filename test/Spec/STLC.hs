@@ -60,12 +60,14 @@ data Judgement = [(String, Type)] :- Type
   deriving (Show, Eq)
 
 instance MonadExtract Int Term String TacticState Identity where
-    hole s =
-        let m = meta s
-        in pure (m, Hole m, s { meta = 1 + m })
-    unsolvableHole s _ =
-        let m = meta s
-        in pure (m, Hole m, s { meta = 1 + m })
+  hole = do
+    m <- gets meta
+    modify $ \ts -> ts { meta = m + 1}
+    pure (m, Hole m)
+  unsolvableHole _ = do
+    m <- gets meta
+    modify $ \ts -> ts { meta = m + 1}
+    pure (m, Hole m)
 
 instance MetaSubst Int Term where
     substMeta _ _ (Var s) = Var s

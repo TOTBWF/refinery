@@ -52,6 +52,7 @@ import qualified Control.Monad.Writer.Strict as SW
 import           Control.Monad.State
 import           Control.Monad.Morph
 import           Control.Monad.Reader
+import           Data.Tuple (swap)
 
 import           GHC.Generics
 
@@ -170,17 +171,24 @@ instance (Monad m) => MonadPlus (ProofStateT ext ext err s m) where
 class (Monad m) => MonadExtract meta ext err s m | m -> ext, m -> err, ext -> meta where
   -- | Generates a named "hole" of type @ext@, which should represent
   -- an incomplete extract.
-  hole :: s -> m (meta, ext, s)
-  default hole :: (MonadTrans t, MonadExtract meta ext err s m1, m ~ t m1) => s -> m (meta, ext, s)
-  hole = lift . hole
+  hole :: StateT s m (meta, ext)
+  default hole :: (MonadTrans t, MonadExtract meta ext err s m1, m ~ t m1) => StateT s m (meta, ext)
+  hole = mapStateT lift hole
 
   -- | Generates an "unsolvable hole" of type @err@, which should represent
   -- an incomplete extract that we have no hope of solving.
   --
   -- These will get generated when you generate partial extracts via 'Refinery.Tactic.runPartialTacticT'.
-  unsolvableHole :: s -> err -> m (meta, ext, s)
-  default unsolvableHole :: (MonadTrans t, MonadExtract meta ext err s m1, m ~ t m1) => s -> err -> m (meta, ext, s)
-  unsolvableHole s err = lift $ unsolvableHole s err
+  unsolvableHole :: err -> StateT s m (meta, ext)
+  default unsolvableHole :: (MonadTrans t, MonadExtract meta ext err s m1, m ~ t m1) => err -> StateT s m (meta, ext)
+  unsolvableHole = mapStateT lift . unsolvableHole
+
+
+newHole :: MonadExtract meta ext err s m => s -> m (s, (meta, ext))
+newHole = fmap swap . runStateT hole
+
+newUnsolvableHole :: MonadExtract meta ext err s m => s -> err -> m (s, (meta, ext))
+newUnsolvableHole s err = fmap swap $ runStateT (unsolvableHole err) s
 
 
 instance (MonadExtract meta ext err s m) => MonadExtract meta ext err s (ReaderT r m)
@@ -232,7 +240,7 @@ proofs s p = go s [] pure p
     where
       go :: s -> [(meta, goal)] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [err] [Proof s meta goal ext])
       go s goals _ (Subgoal goal k) = do
-         (meta, h, s') <- hole s
+         (s', (meta, h)) <- newHole s
          -- Note [Handler Reset]:
          -- We reset the handler stack to avoid the handlers leaking across subgoals.
          -- This would happen when we had a handler that wasn't followed by an error call.
@@ -279,7 +287,7 @@ partialProofs s pf = go s [] [] pure pf
     where
       go :: s -> [(meta, goal)] -> [(meta, err)] -> (err -> m err) -> ProofStateT ext ext err s m goal -> m (Either [PartialProof s err meta goal ext] [Proof s meta goal ext])
       go s goals errs _ (Subgoal goal k) = do
-         (meta, h, s') <- hole s
+         (s', (meta, h)) <- newHole s
          -- See Note [Handler Reset]
          go s' (goals ++ [(meta, goal)]) errs pure $ k h
       go s goals errs handlers (Effect m) = m >>= go s goals errs handlers
@@ -294,7 +302,7 @@ partialProofs s pf = go s [] [] pure pf
       go _ _ _ _ Empty = pure $ Left []
       go s goals errs handlers (Failure err k) = do
           annErr <- handlers err
-          (meta, h, s') <- unsolvableHole s annErr
+          (s', (meta, h)) <- newUnsolvableHole s annErr
           go s' goals (errs ++ [(meta, annErr)]) handlers $ k h
       go s goals errs handlers (Handle p h) =
           -- See Note [Handler ordering]
@@ -369,7 +377,7 @@ speculate s = go s [] pure
     where
       go :: s -> [(meta, jdg)] -> (err -> m err) -> ProofStateT ext ext err s m jdg -> ProofStateT ext (Either err (Proof s meta jdg ext)) err s m x
       go s goals _ (Subgoal goal k) = Effect $ do
-          (meta, h, s') <- hole s
+          (s', (meta, h)) <- newHole s
           -- See Note [Handler Reset]
           pure $ go s' (goals ++ [(meta, goal)]) pure (k h)
       go s goals handler (Effect m) = Effect (fmap (go s goals handler) m)

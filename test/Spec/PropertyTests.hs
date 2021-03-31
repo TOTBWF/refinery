@@ -61,8 +61,14 @@ instance ( Arbitrary jdg
   (=-=) = (=-=) `on` rule . const
 
 instance MonadExtract Int Int String Int Identity where
-  hole i = pure (i,0,i + 1)
-  unsolvableHole i _ = pure (i, 0, i + 1)
+  hole = do
+    i <- get
+    modify (+1)
+    pure (i, 0)
+  unsolvableHole _ = do
+    i <- get
+    modify (+1)
+    pure (i, 0)
 
 instance ( CoArbitrary ext'
          , Arbitrary ext
