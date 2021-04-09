@@ -1,3 +1,5 @@
 .stack-work/
-refinery.cabal
+.stack-work-hie/
+stack.yaml.lock
+stack-hie.yaml.lock
 *~

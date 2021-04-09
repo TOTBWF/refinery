@@ -1,5 +1,7 @@
 cradle:
   stack:
+    stackYaml: stack-hie.yaml
+    components:
     - path: "./src"
       component: "refinery:lib"
 

@@ -27,9 +27,12 @@ module Refinery.Tactic.Internal
   ( TacticT(..)
   , tactic
   , proofState
+  , proofState_
   , mapTacticT
-  , MonadRule(..)
+  -- * Rules
   , RuleT(..)
+  , subgoal
+  , unsolvable
   )
 where
 
@@ -38,7 +41,6 @@ import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Except
 import Control.Monad.Catch
-import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Trans ()
 import Control.Monad.IO.Class ()
@@ -56,18 +58,24 @@ import Refinery.ProofState
 -- * @err@ - The error type. We can use 'throwError' to abort the computation with a provided error
 -- * @s@   - The state type.
 -- * @m@   - The base monad.
--- * @a@   - The return value. This to make @'TacticT'@ a monad, and will always be @'()'@
+-- * @a@   - The return value. This to make @'TacticT'@ a monad, and will always be @'Prelude.()'@
+--
+-- One of the most important things about this type is it's 'Monad' instance. @t1 >> t2@
+-- Will execute @t1@ against the current goal, and then execute @t2@ on _all_ of the subgoals generated
+-- by @t2@.
+--
+-- This Monad instance is lawful, and has been tested thouroughly, and a version of it has been formally verified in Agda.
+-- _However_, just because it is correct doesn't mean that it lines up with your intuitions of how Monads behave!
+-- In practice, it feels like a combination of the Non-Determinisitic Monads and some of the Time Travelling ones.
+-- That doesn't mean that it's impossible to understand, just that it may push the boundaries of you intuitions.
 newtype TacticT jdg ext err s m a = TacticT { unTacticT :: StateT jdg (ProofStateT ext ext err s m) a }
   deriving ( Functor
            , Applicative
            , Alternative
            , Monad
            , MonadPlus
-           , MonadReader env
-           , MonadError err
            , MonadIO
            , MonadThrow
-           , MonadCatch
            , Generic
            )
 
@@ -78,9 +86,13 @@ instance (Monoid jdg, Show a, Show jdg, Show err, Show ext, Show (m (ProofStateT
 tactic :: (jdg -> ProofStateT ext ext err s m (a, jdg)) -> TacticT jdg ext err s m a
 tactic t = TacticT $ StateT t
 
--- |  Helper function for deconstructing a tactic.
+-- | @proofState t j@ will deconstruct a tactic @t@ into a 'ProofStateT' by running it at @j@.
 proofState :: TacticT jdg ext err s m a -> jdg -> ProofStateT ext ext err s m (a, jdg)
 proofState t j = runStateT (unTacticT t) j
+
+-- | Like 'proofState', but we discard the return value of @t@.
+proofState_ :: (Functor m) => TacticT jdg ext err s m a -> jdg -> ProofStateT ext ext err s m jdg
+proofState_ t j = execStateT (unTacticT t) j
 
 -- | Map the unwrapped computation using the given function
 mapTacticT :: (Monad m) => (m a -> m b) -> TacticT jdg ext err s m a -> TacticT jdg ext err s m b
@@ -106,11 +118,15 @@ instance (Show jdg, Show err, Show a, Show (m (ProofStateT ext a err s m jdg))) 
   show = show . unRuleT
 
 instance Functor m => Functor (RuleT jdg ext err s m) where
-  fmap = coerce mapExtract'
+  fmap f = coerce (mapExtract id f)
 
 instance Monad m => Applicative (RuleT jdg ext err s m) where
   pure = return
   (<*>) = ap
+
+instance Monad m => Alternative (RuleT jdg ext err s m) where
+    empty = coerce Empty
+    (<|>) = coerce Alt
 
 instance Monad m => Monad (RuleT jdg ext err s m) where
   return = coerce . Axiom
@@ -119,9 +135,10 @@ instance Monad m => Monad (RuleT jdg ext err s m) where
   RuleT (Stateful s)       >>= f = coerce $ Stateful $ fmap (bindAlaCoerce f) . s
   RuleT (Alt p1 p2)        >>= f = coerce $ Alt (bindAlaCoerce f p1) (bindAlaCoerce f p2)
   RuleT (Interleave p1 p2) >>= f = coerce $ Interleave (bindAlaCoerce f p1) (bindAlaCoerce f p2)
-  RuleT (Commit p1 p2) >>= f = coerce $ Commit (bindAlaCoerce f p1) (bindAlaCoerce f p2)
+  RuleT (Commit p1 p2)     >>= f = coerce $ Commit (bindAlaCoerce f p1) (bindAlaCoerce f p2)
   RuleT Empty              >>= _ = coerce $ Empty
-  RuleT (Failure err)      >>= _ = coerce $ Failure err
+  RuleT (Failure err k)    >>= f = coerce $ Failure err $ fmap (bindAlaCoerce f) k
+  RuleT (Handle p h)       >>= f = coerce $ Handle (bindAlaCoerce f p) h
   RuleT (Axiom e)          >>= f = f e
 
 instance Monad m => MonadState s (RuleT jdg ext err s m) where
@@ -129,27 +146,10 @@ instance Monad m => MonadState s (RuleT jdg ext err s m) where
         let (a, s') = f s
         in (s', Axiom a)
 
-instance MonadReader r m => MonadReader r (RuleT jdg ext err s m) where
-    ask = lift ask
-    local f (RuleT (Subgoal goal k))   = coerce $ Subgoal goal (localAlaCoerce f . k)
-    local f (RuleT (Effect m))         = coerce $ Effect (local f m)
-    local f (RuleT (Stateful s))       = coerce $ Stateful (fmap (localAlaCoerce f) . s)
-    local f (RuleT (Alt p1 p2))        = coerce $ Alt (localAlaCoerce f p1) (localAlaCoerce f p2)
-    local f (RuleT (Interleave p1 p2)) = coerce $ Interleave (localAlaCoerce f p1) (localAlaCoerce f p2)
-    local f (RuleT (Commit p1 p2)) = coerce $ Commit (localAlaCoerce f p1) (localAlaCoerce f p2)
-    local _ (RuleT Empty)              = coerce $ Empty
-    local _ (RuleT (Failure err))      = coerce $ Failure err
-    local _ (RuleT (Axiom e))          = coerce $ Axiom e
-
 bindAlaCoerce
   :: (Monad m, Coercible c (m b), Coercible a1 (m a2)) =>
      (a2 -> m b) -> a1 -> c
 bindAlaCoerce f = coerce . (f =<<) . coerce
-
-localAlaCoerce
-  :: (MonadReader r m) =>
-     (r -> r) -> ProofStateT ext a err s m jdg -> ProofStateT ext a err s m jdg
-localAlaCoerce f = coerce . local f . RuleT
 
 instance MonadTrans (RuleT jdg ext err s) where
   lift = coerce . Effect . fmap Axiom
@@ -160,19 +160,11 @@ instance MFunctor (RuleT jdg ext err s) where
 instance MonadIO m => MonadIO (RuleT jdg ext err s m) where
   liftIO = lift . liftIO
 
-instance Monad m => MonadError err (RuleT jdg ext err s m) where
-  throwError = coerce . Failure
-  catchError r h = coerce $ flip catchError h $ coerce r
+-- | Create a subgoal, and return the resulting extract.
+subgoal :: jdg -> RuleT jdg ext err s m ext
+subgoal jdg = RuleT $ Subgoal jdg Axiom
 
-class (Monad m) => MonadRule jdg ext m | m -> jdg, m -> ext where
-  -- | Create a subgoal, and return the resulting extract.
-  subgoal :: jdg -> m ext
-  default subgoal :: (MonadTrans t, MonadRule jdg ext m1, m ~ t m1) => jdg -> m ext
-  subgoal = lift . subgoal
-
-instance (Monad m) => MonadRule jdg ext (RuleT jdg ext err s m) where
-  subgoal j = RuleT $ Subgoal j Axiom
-
-instance (MonadRule jdg ext m) => MonadRule jdg ext (ReaderT env m)
-instance (MonadRule jdg ext m) => MonadRule jdg ext (StateT env m)
-instance (MonadRule jdg ext m) => MonadRule jdg ext (ExceptT env m)
+-- | Create an "unsolvable" hole. These holes are ignored by subsequent tactics,
+-- but do not cause a backtracking failure.
+unsolvable :: err -> RuleT jdg ext err s m ext
+unsolvable err = RuleT $ Failure err Axiom

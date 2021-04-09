@@ -1,5 +1,5 @@
 name:                refinery
-version:             0.3.0.0
+version:             0.4.0.0
 github:              "totbwf/refinery"
 license:             BSD3
 author:              "Reed Mullanix"
@@ -22,7 +22,6 @@ description:         Please see the README on GitHub at <https://github.com/gith
 dependencies:
 - base >= 4.7 && < 5
 - exceptions >= 0.10
-- logict >= 0.6
 - mmorph >= 1
 - mtl >= 2
 
@@ -34,16 +33,6 @@ library:
   source-dirs: src
 
 tests:
-  examples:
-    main:                STLC.hs
-    source-dirs:         examples
-    ghc-options:
-    - -threaded
-    - -rtsopts
-    - -with-rtsopts=-N
-    dependencies:
-    - refinery
-
   refinery-test:
     main:                Spec.hs
     source-dirs:         test
@@ -56,3 +45,8 @@ tests:
     - hspec
     - checkers
     - QuickCheck
+
+tested-with:
+  - GHC ==8.6.5
+  - GHC ==8.8.3
+  - GHC ==8.10.4
