@@ -21,6 +21,9 @@
 module Refinery.Tactic
   ( TacticT
   , runTacticT
+  , runStreamingTacticT
+  , ListT(..)
+  , Elem(..)
   , runPartialTacticT
   , evalTacticT
   , Proof(..)
@@ -191,6 +194,9 @@ tweak f t = tactic $ \j -> mapExtract id f $ proofState t j
 -- use 'runPartialTacticT'
 runTacticT :: (MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> jdg -> s -> m (Either [err] [(Proof s meta jdg ext)])
 runTacticT t j s = proofs s $ fmap snd $ proofState t j
+
+runStreamingTacticT :: (MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> jdg -> s -> ListT m (Either err (Proof s meta jdg ext))
+runStreamingTacticT t j s = streamProofs s $ fmap snd $ proofState t j
 
 -- | Run a tactic, and get just the list of extracts, ignoring any other information.
 evalTacticT :: (MonadExtract meta ext err s m) => TacticT jdg ext err s m () -> jdg -> s -> m [ext]
