@@ -43,6 +43,7 @@ module Refinery.ProofState
   , speculate
   , streamProofs
   , ListT(..)
+  , pumpListT
   , Elem(..)
   ) where
 
@@ -320,6 +321,13 @@ data Elem m a
     = Done
     | Next a (ListT m a)
     deriving stock Functor
+
+
+pumpListT :: Monad m => ListT m a -> m [a]
+pumpListT (ListT m) =
+  m >>= \case
+    Done -> pure []
+    Next a lt -> (:) <$> pure a <*> pumpListT lt
 
 
 point :: Applicative m => a -> Elem m a

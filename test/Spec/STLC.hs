@@ -1,14 +1,17 @@
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# OPTIONS_GHC -Wno-orphans            #-}
+{-# LANGUAGE UndecidableInstances #-}
+
 module Spec.STLC where
 
 import Data.List
@@ -16,12 +19,84 @@ import Data.String (IsString(..))
 
 import Control.Applicative
 import Control.Monad.Identity
-import Control.Monad.State
+import Control.Monad.State.Strict
 
 import Refinery.ProofState
 import Refinery.Tactic
 
+import GHC.Generics (Generic)
 import Test.Hspec
+import Test.Hspec.QuickCheck
+import Test.QuickCheck hiding (Failure)
+import Refinery.Tactic.Internal
+import Refinery.ProofState (pumpListT)
+
+
+decayArbitrary :: Arbitrary a => Int -> Gen a
+decayArbitrary n = scale (`div` n) arbitrary
+
+instance ( CoArbitrary ext'
+         , Arbitrary ext
+         , CoArbitrary err
+         , Arbitrary err
+         , Arbitrary a
+         , Arbitrary (m (ProofStateT ext' ext err s m a))
+         , Arbitrary (m err)
+         , CoArbitrary s
+         , Arbitrary s
+         )
+      => Arbitrary (ProofStateT ext' ext err s m a) where
+  arbitrary = getSize >>= \case
+    n | n <= 1 -> oneof small
+    _ -> oneof $
+      [ Subgoal    <$> decayArbitrary 2 <*> decayArbitrary 2
+      , Effect     <$> arbitrary
+      , Interleave <$> decayArbitrary 2 <*> decayArbitrary 2
+      , Alt        <$> decayArbitrary 2 <*> decayArbitrary 2
+      , Stateful   <$> arbitrary
+      , Failure    <$> arbitrary <*> decayArbitrary 2
+      , Handle     <$> decayArbitrary 2 <*> arbitrary
+      ] ++ small
+    where
+      small =
+        [ pure Empty
+        , Axiom   <$> arbitrary
+        ]
+  shrink = genericShrink
+
+instance ( Arbitrary a
+         , CoArbitrary err
+         , Arbitrary err
+         , CoArbitrary ext
+         , Arbitrary jdg
+         , Arbitrary (m (ProofStateT ext a err s m jdg))
+         , Arbitrary (m err)
+         , CoArbitrary s
+         , Arbitrary s
+         )
+      => Arbitrary (RuleT jdg ext err s m a) where
+  arbitrary = fmap RuleT arbitrary
+  shrink = genericShrink
+
+instance (Arbitrary (m (a, s)), CoArbitrary s) => Arbitrary (StateT s m a) where
+  arbitrary = StateT <$> arbitrary
+
+instance ( CoArbitrary jdg
+         , Arbitrary a
+         , Arbitrary ext
+         , CoArbitrary err
+         , Arbitrary err
+         , CoArbitrary ext
+         , Arbitrary jdg
+         , Arbitrary (m (ProofStateT ext ext err s m (a, jdg)))
+         , Arbitrary (m err)
+         , CoArbitrary s
+         , Arbitrary s
+         )
+      => Arbitrary (TacticT jdg ext err s m a) where
+  arbitrary = fmap (TacticT . StateT) arbitrary
+  shrink = genericShrink
+
 
 -- Just a very simple version of Simply Typed Lambda Calculus,
 -- augmented with 'Hole' so that we can have
@@ -31,7 +106,24 @@ data Term
   | Hole Int
   | Lam String Term
   | Pair Term Term
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
+instance Arbitrary Term where
+  arbitrary
+    = let terminal = [Var <$> arbitrary, Hole <$> arbitrary]
+      in
+        sized
+          $ (\ n
+               -> case n <= 1 of
+                    True -> oneof terminal
+                    False
+                      -> oneof
+                           $ ([(Lam <$> arbitrary) <*> scale (subtract 1) arbitrary,
+                               (Pair <$> scale (flip div 2) arbitrary)
+                                 <*> scale (flip div 2) arbitrary]
+                                <> terminal))
+
+
 
 
 -- The type part of simply typed lambda calculus
@@ -39,10 +131,39 @@ data Type
   = TVar String
   | Type :-> Type
   | TPair Type Type
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
+instance CoArbitrary Type
+
+instance Arbitrary Type where
+  arbitrary
+    = let terminal = [TVar <$> arbitrary]
+      in
+        sized
+          $ (\ n
+               -> case n <= 1 of
+                    True -> oneof terminal
+                    False
+                      -> oneof
+                           $ ([((:->) <$> scale (flip div 2) arbitrary)
+                                 <*> scale (flip div 2) arbitrary,
+                               (TPair <$> scale (flip div 2) arbitrary)
+                                 <*> scale (flip div 2) arbitrary]
+                                <> terminal))
 
 data TacticState = TacticState { name :: Int, meta :: Int }
-    deriving Show
+    deriving (Show, Eq)
+
+instance Arbitrary TacticState where
+  arbitrary = TacticState <$> arbitrary <*> arbitrary
+
+instance CoArbitrary TacticState where
+  coarbitrary (TacticState name meta) = coarbitrary (name, meta)
+
+instance CoArbitrary Term where
+
+instance CoArbitrary Judgement where
+
 
 fresh :: MonadState TacticState m => m String
 fresh = do
@@ -52,12 +173,21 @@ fresh = do
 
 infixr 4 :->
 
+instance Semigroup Judgement where
+  (<>) = error "it's not really a semigroup, dummy"
+
+instance Monoid Judgement where
+  mempty = [] :- TVar ""
+
 instance IsString Type where
     fromString = TVar
 
 -- A judgement is just a context, along with a goal
 data Judgement = [(String, Type)] :- Type
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
+instance Arbitrary Judgement where
+  arbitrary = (:-) <$> arbitrary <*> arbitrary
 
 instance MonadExtract Int Term String TacticState Identity where
   hole = do
@@ -145,3 +275,14 @@ stlcTests = do
         it "handler works through alt" $ (evalT testHandlerAlt jdg) `shouldBe` (Left ["Error1 Handled","Error2 Handled"])
         it "reify gets the right subgoals" $ (evalT testReify jdg) `shouldBe` (Left ["Generated 2 subgoals"])
         it "attempt properly handles errors" $ (evalT testAttempt jdg) `shouldBe` (Left ["Attempt Test Succeeds"])
+
+    prop "yo" $ \(a :: T ()) b jdg st ->
+      pumpListT (runStreamingTacticT (a <|> b) jdg st) ===
+         mconcat
+          [ pumpListT (runStreamingTacticT a jdg st)
+          , pumpListT (runStreamingTacticT b jdg st)
+          ]
+
+    prop "yo" $ \(t :: T ()) (a :: T ()) jdg st ->
+      pumpListT (runStreamingTacticT (rule subgoal >> a) jdg st) ===
+        pumpListT (runStreamingTacticT a jdg st)
