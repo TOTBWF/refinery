@@ -98,11 +98,12 @@ data ProofStateT ext' ext err s m goal
     -- or run effects.
     | Axiom ext
     -- ^ Represents a simple extract.
+    | Annotate String (ProofStateT ext' ext err s m goal)
     deriving stock (Generic, Functor)
 
-instance (Show goal, Show err, Show ext, Show (m (ProofStateT ext' ext err s m goal))) => Show (ProofStateT ext' ext err s m goal) where
+instance (Show goal, Show err, Show ext) => Show (ProofStateT ext' ext err s m goal) where
   show (Subgoal goal _) = "(Subgoal " <> show goal <> " <k>)"
-  show (Effect m) = "(Effect " <> show m <> ")"
+  show (Effect _) = "(Effect <e>)"
   show (Stateful _) = "(Stateful <s>)"
   show (Alt p1 p2) = "(Alt " <> show p1 <> " " <> show p2 <> ")"
   show (Interleave p1 p2) = "(Interleave " <> show p1 <> " " <> show p2 <> ")"
@@ -111,6 +112,7 @@ instance (Show goal, Show err, Show ext, Show (m (ProofStateT ext' ext err s m g
   show (Failure err _) = "(Failure " <> show err <> " <k>)"
   show (Handle p _) = "(Handle " <> show p <> " <h>)"
   show (Axiom ext) = "(Axiom " <> show ext <> ")"
+  show (Annotate name _) = "(" <> show name <> ")"
 
 instance Functor m => Applicative (ProofStateT ext ext err s m) where
     pure = return
@@ -127,6 +129,7 @@ instance MFunctor (ProofStateT ext' ext err s) where
   hoist nat (Handle p h) = Handle (hoist nat p) (nat . h)
   hoist _ Empty         = Empty
   hoist _ (Axiom ext)   = Axiom ext
+  hoist nat (Annotate name a) = Annotate name $ hoist nat a
 
 -- | Apply a continuation that creates new proof states from an extract
 -- onto all of the 'Axiom' constructors of a 'ProofStateT'.
@@ -145,6 +148,7 @@ applyCont _ Empty = Empty
 applyCont k (Failure err k') = Failure err (applyCont k . k')
 applyCont k (Handle p h) = Handle (applyCont k p) h
 applyCont k (Axiom ext) = k ext
+applyCont k (Annotate _ p) = applyCont k p
 
 instance Functor m => Monad (ProofStateT ext ext err s m) where
     return goal = Subgoal goal Axiom
@@ -158,6 +162,7 @@ instance Functor m => Monad (ProofStateT ext ext err s m) where
     (Handle p h)       >>= f = Handle (p >>= f) h
     Empty              >>= _ = Empty
     (Axiom ext)        >>= _ = Axiom ext
+    (Annotate name p)  >>= f = Annotate name $ p >>= f
 
 instance MonadTrans (ProofStateT ext ext err s) where
     lift m = Effect (fmap pure m)
@@ -275,6 +280,7 @@ proofs s p = go s [] pure p
           -- IE: for @handler f >> handler g >> failure err@, @g@ ought to be run before @f@.
           go s goals (h >=> handlers) p
       go s goals _ (Axiom ext) = pure $ Right $ [Proof ext s goals]
+      go s goals handlers (Annotate _ p) = go s goals handlers p
 
 -- | The result of executing 'partialProofs'.
 data PartialProof s err meta goal ext
@@ -314,6 +320,7 @@ partialProofs s pf = go s [] [] pure pf
           go s goals errs (h >=> handlers) p
       go s goals [] _ (Axiom ext) = pure $ Right [Proof ext s goals]
       go s goals errs _ (Axiom ext) = pure $ Left [PartialProof ext s goals errs]
+      go s goals errs handlers (Annotate _ p) = go s goals errs handlers p
 
 
 data Elem m a
@@ -412,6 +419,7 @@ streamProofs s p = ListT $ go s [] pure p
           -- IE: for @handler f >> handler g >> failure err@, @g@ ought to be run before @f@.
           go s goals (h >=> handlers) p
       go s goals _ (Axiom ext) = pure $ point $ Right (Proof ext s goals)
+      go s goals handlers (Annotate _ p) = go s goals handlers p
 
 
 instance (MonadIO m) => MonadIO (ProofStateT ext ext err s m) where
@@ -440,6 +448,7 @@ subgoals fs (Failure err k) = Failure err (subgoals fs . k)
 subgoals fs (Handle p h) = Handle (subgoals fs p) h
 subgoals _ Empty = Empty
 subgoals _ (Axiom ext) = Axiom ext
+subgoals fs (Annotate _ p) = subgoals fs p
 
 -- | @mapExtract f g p@ allows yout to modify the extract type of a ProofState.
 -- This witness the @Profunctor@ instance of 'ProofStateT', which we can't write without a newtype due to
@@ -455,6 +464,7 @@ mapExtract _ _ Empty = Empty
 mapExtract into out (Failure err k) = Failure err (mapExtract into out . k . into)
 mapExtract into out (Handle p h) = Handle (mapExtract into out p) h
 mapExtract _ out (Axiom ext) = Axiom (out ext)
+mapExtract into out (Annotate name p) = Annotate name $ mapExtract into out p
 
 -- | 'MetaSubst' captures the notion of substituting metavariables of type @meta@ into an extract of type @ext@.
 -- Note that these substitutions should most likely _not_ be capture avoiding.
@@ -507,3 +517,4 @@ speculate s = go s [] pure
           -- See Note [Handler Ordering] as well for more details on the @h >=> handler@ bit.
           Handle (go s goals (h >=> handler) p) h
       go s goals _       (Axiom ext) = Axiom $ Right (Proof ext s goals)
+      go s goals handler (Annotate _ p) = go s goals handler p

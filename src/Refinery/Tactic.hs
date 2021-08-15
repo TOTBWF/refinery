@@ -64,6 +64,7 @@ module Refinery.Tactic
   , pruning
   , peek
   , attempt
+  , annotate
   ) where
 
 import Control.Applicative
@@ -73,6 +74,7 @@ import Data.Bifunctor
 
 import Refinery.ProofState
 import Refinery.Tactic.Internal
+import Control.Monad.State.Strict (mapStateT)
 
 -- | Create a tactic that applies each of the tactics in the list to one subgoal.
 --
@@ -93,6 +95,10 @@ t1 <%> t2 = tactic $ \j -> Interleave (proofState t1 j) (proofState t2 j)
 -- | Tries to run a tactic, backtracking on failure
 try :: (Monad m) => TacticT jdg ext err s m () -> TacticT jdg ext err s m ()
 try t = t <|> pure ()
+
+
+annotate :: String -> TacticT jdg ext err s m a -> TacticT jdg ext err s m a
+annotate name = TacticT . mapStateT (Annotate name) . unTacticT
 
 -- | @commit t1 t2@ will run @t1@, and then run @t2@ only if @t1@ (and all subsequent tactics) failed to produce any successes.
 --
