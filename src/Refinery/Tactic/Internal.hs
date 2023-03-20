@@ -38,6 +38,7 @@ where
 
 import GHC.Generics
 import Control.Applicative
+import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.Except
 import Control.Monad.Catch
