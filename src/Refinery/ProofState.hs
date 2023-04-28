@@ -11,6 +11,7 @@
 {-# LANGUAGE RankNTypes             #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
 {-# LANGUAGE TypeFamilies           #-}
+{-# LANGUAGE TypeOperators          #-}
 {-# LANGUAGE UndecidableInstances   #-}
 {-# LANGUAGE ViewPatterns           #-}
 
@@ -108,7 +109,7 @@ instance (Show goal, Show err, Show ext, Show (m (ProofStateT ext' ext err s m g
   show (Axiom ext) = "(Axiom " <> show ext <> ")"
 
 instance Functor m => Applicative (ProofStateT ext ext err s m) where
-    pure = return
+    pure goal = Subgoal goal Axiom
     (<*>) = ap
 
 instance MFunctor (ProofStateT ext' ext err s) where
@@ -142,7 +143,7 @@ applyCont k (Handle p h) = Handle (applyCont k p) h
 applyCont k (Axiom ext) = k ext
 
 instance Functor m => Monad (ProofStateT ext ext err s m) where
-    return goal = Subgoal goal Axiom
+    return = pure
     (Subgoal a k)      >>= f = applyCont (f <=< k) (f a)
     (Effect m)         >>= f = Effect (fmap (>>= f) m)
     (Stateful s)       >>= f = Stateful $ fmap (>>= f) . s
