@@ -38,8 +38,7 @@ where
 
 import GHC.Generics
 import Control.Applicative
-import Control.Monad.Identity
-import Control.Monad.Except
+import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.State.Strict
 import Control.Monad.Trans ()
@@ -121,7 +120,7 @@ instance Functor m => Functor (RuleT jdg ext err s m) where
   fmap f = coerce (mapExtract id f)
 
 instance Monad m => Applicative (RuleT jdg ext err s m) where
-  pure = return
+  pure = coerce . Axiom
   (<*>) = ap
 
 instance Monad m => Alternative (RuleT jdg ext err s m) where
@@ -129,7 +128,7 @@ instance Monad m => Alternative (RuleT jdg ext err s m) where
     (<|>) = coerce Alt
 
 instance Monad m => Monad (RuleT jdg ext err s m) where
-  return = coerce . Axiom
+  return = pure
   RuleT (Subgoal goal k)   >>= f = coerce $ Subgoal goal $ fmap (bindAlaCoerce f) k
   RuleT (Effect m)         >>= f = coerce $ Effect $ fmap (bindAlaCoerce f) m
   RuleT (Stateful s)       >>= f = coerce $ Stateful $ fmap (bindAlaCoerce f) . s
